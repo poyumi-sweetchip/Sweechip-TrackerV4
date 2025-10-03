@@ -1,0 +1,2560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sweechip - Business Tracker</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js for Analytics -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Use a cute, rounded font like Fredoka -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@300..700&display=swap');
+        
+        /* Animation for the new fluffy chick */
+        @keyframes gentle-bounce {
+            0%, 100% { transform: translateY(0) rotate(-3deg); }
+            50% { transform: translateY(-6px) rotate(3deg); }
+        }
+        .fluffy-chick-animation {
+            animation: gentle-bounce 2.5s ease-in-out infinite;
+        }
+
+        body {
+            font-family: 'Fredoka', sans-serif;
+            background-color: #FFFBEB; /* Creamy Yellow */
+            background-image: radial-gradient(#FEEFA9 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+        
+        /* --- SWEECHIP THEME --- */
+        .yellow-primary { background-color: #FFD54F; }
+        .yellow-text { color: #D97706; }
+        .pink-accent { background-color: #FBCFE8; } /* Baby Pink */
+        .pink-text { color: #BE185D; }
+        .brown-text { color: #854D0E; }
+        .bg-light-yellow { background-color: #FEF9C3; }
+        
+        .btn-primary { background-color: #F9A8D4; color: #831843; transition: all 0.2s; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); border-bottom: 3px solid #BE185D; font-weight: 600; }
+        .btn-primary:hover { background-color: #F472B6; transform: translateY(-2px); }
+        .btn-primary:active { transform: translateY(0); border-bottom-width: 1px; }
+
+        .btn-secondary { background-color: #FFD54F; color: #854D0E; border: 2px solid #D97706; transition: all 0.2s; }
+        .btn-secondary:hover { background-color: #FBBF24; transform: translateY(-2px); }
+
+        .btn-cancel { background-color: #F1F5F9; color: #475569; border: 1px solid #CBD5E1; transition: all 0.2s; }
+        .btn-cancel:hover { background-color: #E2E8F0; transform: translateY(-2px); }
+
+        .btn-delete { background-color: #FECACA; color: #991B1B; transition: all 0.2s; font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 9999px; }
+        .btn-delete:hover { background-color: #F87171; color: white; }
+        
+        .btn-edit { background-color: #FEF9C3; color: #854D0E; transition: all 0.2s; font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 9999px; border: 1px solid #FBBF24;}
+        .btn-edit:hover { background-color: #FBBF24;}
+
+        .card-header { border-bottom: 2px solid #FBCFE8; padding-bottom: 0.5rem; margin-bottom: 1rem; }
+        .input-style { background-color: #fff; border: 2px solid #F9A8D4; padding: 0.75rem; border-radius: 0.75rem; box-shadow: inset 0 2px 4px 0 rgba(0,0,0,0.05); }
+        
+        nav { border-bottom: 2px solid #FBBF24; }
+        .tab-button { background: #fff0c2; border: 2px solid #FBBF24; padding: 0.75rem 1.5rem; font-weight: 600; color: #D97706; cursor: pointer; transition: all 0.3s ease-in-out; border-radius: 9999px; margin: 0 0.25rem 0.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .tab-button:hover { transform: translateY(-2px); background-color: #FBBF24; color: #854D0E; }
+        .tab-button.active { background-color: #F9A8D4; color: #9D174D; border-color: #BE185D; transform: translateY(-2px) scale(1.05); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .cute-card { border-radius: 1.5rem !important; border-width: 2px !important; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05), 0 4px 6px -2px rgba(0,0,0,0.05) !important; }
+
+    </style>
+    <!-- Firebase Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, collection, query, where, orderBy, serverTimestamp, runTransaction, addDoc, updateDoc, limit, getDocs, deleteDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // --- Firebase & App State ---
+        let app, db, auth, currentUserId;
+        let tailorOutstandingBalance = 0, cutter1OutstandingBalance = 0, cutter2OutstandingBalance = 0;
+        let salesChart = null;
+        let expenseChart = null;
+        let currentInventoryState = {}; // Cache for inventory data
+        let allRecords = [], allPayments = [], allExpenses = []; // Caches for exporting
+
+        // App-wide costing settings
+        let appCosts = {
+            sellingPrice: 220,
+            materialCost: 169.88,
+            tailorRate: 17,
+            cutter1Rate: 8,
+            cutter2Rate: 8,
+            owners: [
+                {name:"Videan", share:0.4}, 
+                {name:"Jason", share:0.3}, 
+                {name:"Ivy", share:0.2}, 
+                {name:"Rei", share:0.1}
+            ]
+        };
+
+        // Use environment variables for Firebase config and App ID
+        const firebaseConfig = {
+            apiKey: "AIzaSyDYfl0TiMFHceE88GkHcl7XHDli-LSbArk",
+            authDomain: "a037b08f.firebaseapp.com",
+            projectId: "a037b08f",
+            storageBucket: "a037b08f.firebasestorage.app",
+            messagingSenderId: "485696187373",
+            appId: "1:485696187373:web:f9b40596c0d5eab5ae15e4",
+            measurementId: "G-QPJ29TZBKV"
+        };
+        const appId = firebaseConfig.appId || 'sweechip-default';
+
+
+        // --- Firestore Collection Paths ---
+        const DAILY_RECORDS_COLLECTION = `artifacts/${appId}/public/data/daily_records`;
+        const INVENTORY_DOC_PATH = `artifacts/${appId}/public/data/inventory/current_stock`;
+        const LABOR_PAYMENTS_COLLECTION = `artifacts/${appId}/public/data/labor_payments`;
+        const LABOR_ADJUSTMENTS_COLLECTION = `artifacts/${appId}/public/data/labor_adjustments`;
+        const ORDER_TRACKER_COLLECTION = `artifacts/${appId}/public/data/order_tracker`;  
+        const EXPENSES_COLLECTION = `artifacts/${appId}/public/data/expenses`;
+        const SUPPLIERS_COLLECTION = `artifacts/${appId}/public/data/suppliers`;
+        const DEFECTS_COLLECTION = `artifacts/${appId}/public/data/defects`;
+        const COSTS_DOC_PATH = `artifacts/${appId}/public/data/settings/costs`;
+
+        const LOW_STOCK_THRESHOLD = 10;
+
+        // --- UTILITY FUNCTIONS ---
+        const formatPHP = (num) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(num);
+        const getTodayDate = () => new Date().toISOString().split("T")[0];
+
+        /**
+         * Switches the active tab in the UI.
+         * @param {string} tabName - The name of the tab to activate.
+         */
+        const switchTab = (tabName) => {
+            document.querySelectorAll(".tab-content").forEach(el => el.classList.remove("active"));
+            document.querySelectorAll(".tab-button").forEach(el => el.classList.remove("active"));
+            document.getElementById(`tab-content-${tabName}`).classList.add("active");
+            document.querySelector(`[data-tab="${tabName}"]`).classList.add("active");
+        };
+        
+        const showAlertModal = (title, message) => {
+            const modal = document.getElementById('alert-modal');
+            document.getElementById('alert-modal-title').textContent = title;
+            document.getElementById('alert-modal-message').innerHTML = message;
+            modal.classList.remove('hidden');
+
+            const okBtn = document.getElementById('alert-modal-ok-btn');
+            
+            const closeHandler = () => {
+                modal.classList.add('hidden');
+            };
+            
+            okBtn.addEventListener('click', closeHandler, { once: true });
+        };
+
+        /**
+         * Shows a confirmation modal dialog.
+         * @param {string} title - The title of the modal.
+         * @param {string} message - The confirmation message.
+         * @param {function} onConfirm - The callback function to execute on confirmation.
+         */
+        const showConfirmationModal = (title, message, onConfirm) => {
+            const modal = document.getElementById('confirmation-modal');
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-message').innerHTML = message; // Use innerHTML for potential formatting
+            modal.classList.remove('hidden');
+
+            const confirmBtn = document.getElementById('modal-confirm-btn');
+            const cancelBtn = document.getElementById('modal-cancel-btn');
+
+            const confirmHandler = () => {
+                onConfirm();
+                closeModal();
+            };
+
+            const closeModal = () => {
+                modal.classList.add('hidden');
+                confirmBtn.replaceWith(confirmBtn.cloneNode(true)); // Remove event listener
+                cancelBtn.replaceWith(cancelBtn.cloneNode(true)); // Remove event listener
+            };
+            
+            confirmBtn.addEventListener('click', confirmHandler, { once: true });
+            cancelBtn.addEventListener('click', closeModal, { once: true });
+        };
+        
+        /**
+         * Exports data to a CSV file.
+         * @param {string[]} headers - Array of header strings.
+         * @param {any[][]} data - Array of arrays representing rows.
+         * @param {string} filename - The name of the file to download.
+         */
+        const exportToCSV = (headers, data, filename) => {
+            let csvContent = "data:text/csv;charset=utf-8," 
+                + headers.join(",") + "\n" 
+                + data.map(e => e.join(",")).join("\n");
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", filename);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+
+        // --- FIREBASE & APP INITIALIZATION ---
+        const initFirebase = async () => {
+            // Check if Firebase config is provided
+            if (!firebaseConfig.apiKey) {
+                document.body.innerHTML = `<div class="p-8 text-center bg-yellow-100 text-yellow-800 rounded-2xl shadow-lg max-w-lg mx-auto mt-10 border-2 border-yellow-300">...</div>`;
+                return;
+            }
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                // For a public tracker hosted on GitHub, we will always sign in anonymously.
+                await signInAnonymously(auth);
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        currentUserId = user.uid;
+                        document.getElementById('user-info').textContent = `Session ID: ${currentUserId}`;
+                        
+                        // Show the main content and set up the app
+                        document.getElementById('initial-loader').style.display = 'none';
+                        document.getElementById('tracker-container').classList.remove('hidden');
+                        
+                        // Set default dates
+                        const today = getTodayDate();
+                        document.getElementById('date').value = today;
+                        document.getElementById('orderDueDate').value = today;
+                        document.getElementById('expenseDate').value = today;
+                        document.getElementById('analytics-end-date').value = today;
+                        const twoWeeksAgo = new Date();
+                        twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+                        document.getElementById('analytics-start-date').value = twoWeeksAgo.toISOString().split('T')[0];
+
+
+                        setupEventListeners();
+                        setupDataListeners();
+                        switchTab('dashboard'); // <-- Changed to dashboard
+                    }
+                });
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+                document.body.innerHTML = `<div class="p-8 text-center bg-red-100 text-red-800 rounded-lg max-w-lg mx-auto mt-10">An error occurred during setup. Check the console for details.</div>`;
+            }
+        };
+        
+        // --- DATA LISTENERS (Real-time updates) ---
+        const setupDataListeners = () => {
+            onSnapshot(doc(db, COSTS_DOC_PATH), doc => {
+                if (doc.exists()) {
+                    appCosts = { ...appCosts, ...doc.data() };
+                }
+                renderCostingForm();
+                // We don't call fetchAllDataForAnalytics here to avoid race conditions.
+                // It will be called by the liability listener.
+            });
+
+            onSnapshot(doc(db, INVENTORY_DOC_PATH), doc => {
+                currentInventoryState = doc.exists() ? doc.data() : {};
+                renderInventory(currentInventoryState);
+            });
+
+            // For realtime updates on limited history view
+            onSnapshot(query(collection(db, DAILY_RECORDS_COLLECTION), orderBy("timestamp", "desc"), limit(10)), snap => {
+                allRecords = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                renderRecordsHistory(allRecords);
+            });
+            onSnapshot(query(collection(db, LABOR_PAYMENTS_COLLECTION), orderBy("timestamp", "desc"), limit(10)), snap => {
+                allPayments = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                renderPaymentsHistory(allPayments);
+            });
+             onSnapshot(query(collection(db, EXPENSES_COLLECTION), orderBy("date", "desc"), limit(10)), snap => {
+                allExpenses = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                renderExpensesList(allExpenses);
+             });
+
+            // For other realtime updates
+            onSnapshot(query(collection(db, ORDER_TRACKER_COLLECTION), orderBy("dueDate", "asc")), snap => renderOrders(snap.docs.map(d => ({id: d.id, ...d.data()}))));
+            onSnapshot(query(collection(db, SUPPLIERS_COLLECTION), orderBy("name", "asc")), snap => renderSuppliersList(snap.docs.map(d => ({id: d.id, ...d.data()}))));
+            onSnapshot(query(collection(db, DEFECTS_COLLECTION), orderBy("timestamp", "desc")), snap => renderDefectsList(snap.docs.map(d => ({id:d.id, ...d.data()}))));
+            
+            // Centralized listener for liability and analytics to prevent race conditions
+            setupLiabilityAndAnalyticsListeners();
+        };
+
+        // --- DOM EVENT LISTENERS ---
+        const setupEventListeners = () => {
+            document.querySelectorAll('.tab-button').forEach(button => {
+                button.addEventListener('click', () => switchTab(button.dataset.tab));
+            });
+            document.getElementById('daily-entry-form').addEventListener('submit', handleDailyEntry);
+            document.getElementById('order-form').addEventListener('submit', handleNewOrder);
+            document.getElementById('payment-form').addEventListener('submit', handleSalaryPayment);
+            document.getElementById('expense-form').addEventListener('submit', handleNewExpense);
+            document.getElementById('supplier-form').addEventListener('submit', handleNewSupplier);
+            document.getElementById('defect-form').addEventListener('submit', handleNewDefect);
+            document.getElementById('costing-form').addEventListener('submit', handleSaveCosts);
+            document.getElementById('analytics-shares-form').addEventListener('submit', handleSaveAnalyticsShares);
+            document.getElementById('cover-manager-toggle').addEventListener('click', toggleCoverManager);
+            document.getElementById('new-design-form').addEventListener('submit', handleNewDesign);
+            document.getElementById('edit-design-form').addEventListener('submit', handleUpdateDesignName);
+            document.getElementById('paymentRecipient').addEventListener('change', handleRecipientChange);
+            document.getElementById('cancel-payment-edit').addEventListener('click', resetPaymentForm);
+            document.getElementById('cancel-order-edit').addEventListener('click', resetOrderForm);
+            document.getElementById('modal-cancel-edit-design-btn').addEventListener('click', () => {
+                document.getElementById('edit-design-modal').classList.add('hidden');
+            });
+            document.getElementById('adjustment-form').addEventListener('submit', handleLaborAdjustment);
+            document.getElementById('modal-cancel-adjustment-btn').addEventListener('click', () => {
+                document.getElementById('adjustment-modal').classList.add('hidden');
+            });
+            document.getElementById('updateFoamBtn').addEventListener('click', () => {
+                const val = document.getElementById('manualFoamStock').value;
+                updateSimpleStock('stockFoamCut', val);
+            });
+            document.getElementById('analytics-filter-btn').addEventListener('click', fetchAllDataForAnalytics);
+            document.getElementById('export-production-btn').addEventListener('click', () => {
+                const headers = ["Date", "Covers Sewn", "Cover Cuts", "Foam Cuts", "Assembled", "Sold", "Revenue", "Labor Cost"];
+                const data = allRecords.map(rec => [
+                    rec.date,
+                    rec.tailoredCovers || 0,
+                    rec.coverCuts || 0,
+                    rec.foamCuts || 0,
+                    rec.completedMattresses || 0,
+                    rec.productsSold || 0,
+                    (rec.productsSold || 0) * appCosts.sellingPrice,
+                    ((rec.tailoredCovers || 0) * appCosts.tailorRate) + ((rec.coverCuts || 0) * appCosts.cutter1Rate) + ((rec.foamCuts || 0) * appCosts.cutter2Rate)
+                ]);
+                exportToCSV(headers, data, `sweechip_production_history_${getTodayDate()}.csv`);
+            });
+            document.getElementById('export-payments-btn').addEventListener('click', () => {
+                 const headers = ["Date", "Recipient", "Amount", "Notes"];
+                 const data = allPayments.map(p => [
+                     p.timestamp ? new Date(p.timestamp.seconds * 1000).toLocaleDateString() : 'N/A',
+                     p.recipient,
+                     p.amount,
+                     `"${p.notes || ''}"`
+                 ]);
+                 exportToCSV(headers, data, `sweechip_payment_history_${getTodayDate()}.csv`);
+            });
+             document.getElementById('export-expenses-btn').addEventListener('click', () => {
+                 const headers = ["Date", "Category", "Description", "Amount"];
+                 const data = allExpenses.map(e => [
+                     e.date,
+                     e.category || 'N/A',
+                     `"${e.description || ''}"`,
+                     e.amount
+                 ]);
+                 exportToCSV(headers, data, `sweechip_expenses_${getTodayDate()}.csv`);
+            });
+
+            // Delegated event listener for adjust buttons
+            document.getElementById('tab-content-salary').addEventListener('click', (event) => {
+                if (event.target.classList.contains('adjust-balance-btn')) {
+                    const recipient = event.target.dataset.recipient;
+                    openAdjustmentModal(recipient);
+                }
+            });
+        };
+        
+        // --- DATA FETCHING & CALCULATIONS ---
+
+        // Function to calculate and render liabilities. This is called by the central listener.
+        const calculateAndRenderLiabilities = (allTimeRecords, allLaborPayments, allAdjustments) => {
+            let tailorIncurred = 0, cutter1Incurred = 0, cutter2Incurred = 0;
+            allTimeRecords.forEach(rec => {
+                tailorIncurred += (rec.tailoredCovers || 0);
+                cutter1Incurred += (rec.coverCuts || 0);
+                cutter2Incurred += (rec.foamCuts || 0);
+            });
+
+            const tailorLiability = tailorIncurred * appCosts.tailorRate;
+            const cutter1Liability = cutter1Incurred * appCosts.cutter1Rate;
+            const cutter2Liability = cutter2Incurred * appCosts.cutter2Rate;
+            const totalLaborLiability = tailorLiability + cutter1Liability + cutter2Liability;
+
+            let tailorPaid = allLaborPayments.filter(p => p.recipient === "Tailor").reduce((sum, p) => sum + p.amount, 0);
+            let cutter1Paid = allLaborPayments.filter(p => p.recipient === "Cutter 1").reduce((sum, p) => sum + p.amount, 0);
+            let cutter2Paid = allLaborPayments.filter(p => p.recipient === "Cutter 2").reduce((sum, p) => sum + p.amount, 0);
+            const generalPaid = allLaborPayments.filter(p => p.recipient === "General").reduce((sum, p) => sum + p.amount, 0);
+
+            let tailorAdjusted = allAdjustments.filter(a => a.recipient === "Tailor").reduce((sum, a) => sum + a.amount, 0);
+            let cutter1Adjusted = allAdjustments.filter(a => a.recipient === "Cutter 1").reduce((sum, a) => sum + a.amount, 0);
+            let cutter2Adjusted = allAdjustments.filter(a => a.recipient === "Cutter 2").reduce((sum, a) => sum + a.amount, 0);
+
+            const splitRatio = totalLaborLiability > 0 
+                ? { t: tailorLiability / totalLaborLiability, c1: cutter1Liability / totalLaborLiability, c2: cutter2Liability / totalLaborLiability }
+                : { t: 1/3, c1: 1/3, c2: 1/3 };
+            
+            tailorPaid += generalPaid * splitRatio.t;
+            cutter1Paid += generalPaid * splitRatio.c1;
+            cutter2Paid += generalPaid * splitRatio.c2;
+
+            tailorOutstandingBalance = tailorLiability - tailorPaid - tailorAdjusted;
+            cutter1OutstandingBalance = cutter1Liability - cutter1Paid - cutter1Adjusted;
+            cutter2OutstandingBalance = cutter2Liability - cutter2Paid - cutter2Adjusted;
+            const totalLaborOutstanding = tailorOutstandingBalance + cutter1OutstandingBalance + cutter2OutstandingBalance;
+
+            document.getElementById("tailor-incurred").textContent = formatPHP(tailorLiability);
+            document.getElementById("cutter1-incurred").textContent = formatPHP(cutter1Liability);
+            document.getElementById("cutter2-incurred").textContent = formatPHP(cutter2Liability);
+            document.getElementById("tailor-paid").textContent = formatPHP(tailorPaid);
+            document.getElementById("cutter1-paid").textContent = formatPHP(cutter1Paid);
+            document.getElementById("cutter2-paid").textContent = formatPHP(cutter2Paid);
+            document.getElementById("tailor-adjusted").textContent = formatPHP(tailorAdjusted);
+            document.getElementById("cutter1-adjusted").textContent = formatPHP(cutter1Adjusted);
+            document.getElementById("cutter2-adjusted").textContent = formatPHP(cutter2Adjusted);
+            
+            const tailorOutstandingEl = document.getElementById("tailor-outstanding");
+            tailorOutstandingEl.textContent = formatPHP(tailorOutstandingBalance);
+            tailorOutstandingEl.className = `text-lg font-extrabold ${tailorOutstandingBalance > 0 ? "text-red-700" : "text-green-600"}`;
+
+            const cutter1OutstandingEl = document.getElementById("cutter1-outstanding");
+            cutter1OutstandingEl.textContent = formatPHP(cutter1OutstandingBalance);
+            cutter1OutstandingEl.className = `text-lg font-extrabold ${cutter1OutstandingBalance > 0 ? "text-red-700" : "text-green-600"}`;
+            
+            const cutter2OutstandingEl = document.getElementById("cutter2-outstanding");
+            cutter2OutstandingEl.textContent = formatPHP(cutter2OutstandingBalance);
+            cutter2OutstandingEl.className = `text-lg font-extrabold ${cutter2OutstandingBalance > 0 ? "text-red-700" : "text-green-600"}`;
+            
+            const totalOutstandingEl = document.getElementById("labor-outstanding");
+            totalOutstandingEl.textContent = formatPHP(totalLaborOutstanding);
+            totalOutstandingEl.className = `text-4xl font-extrabold ${totalLaborOutstanding > 0 ? "text-red-500" : "text-green-600"}`;
+             document.getElementById("dashboard-pending-payout").textContent = formatPHP(totalLaborOutstanding);
+        };
+
+        const setupLiabilityAndAnalyticsListeners = () => {
+            let allTimeRecords = [];
+            let allLaborPayments = [];
+            let allAdjustments = [];
+
+            const recalculate = () => {
+                calculateAndRenderLiabilities(allTimeRecords, allLaborPayments, allAdjustments);
+                fetchAllDataForAnalytics(); // Now call analytics after liabilities are stable
+            };
+
+            onSnapshot(query(collection(db, DAILY_RECORDS_COLLECTION)), snap => {
+                allTimeRecords = snap.docs.map(doc => doc.data());
+                recalculate();
+            });
+            onSnapshot(query(collection(db, LABOR_PAYMENTS_COLLECTION)), snap => {
+                allLaborPayments = snap.docs.map(doc => doc.data());
+                recalculate();
+            });
+            onSnapshot(query(collection(db, LABOR_ADJUSTMENTS_COLLECTION)), snap => {
+                allAdjustments = snap.docs.map(doc => doc.data());
+                recalculate();
+            });
+            // Also listen to expenses for the analytics tab
+            onSnapshot(query(collection(db, EXPENSES_COLLECTION)), snap => {
+                recalculate();
+            });
+        };
+
+        const fetchAllDataForAnalytics = async () => {
+            if (!db) return; // Guard against running before DB is initialized
+
+            const startDate = document.getElementById('analytics-start-date').value;
+            const endDate = document.getElementById('analytics-end-date').value;
+
+            const dateConstraintsRecords = [];
+            const dateConstraintsExpenses = [];
+            if (startDate) {
+                dateConstraintsRecords.push(where("date", ">=", startDate));
+                dateConstraintsExpenses.push(where("date", ">=", startDate));
+            }
+            if (endDate) {
+                dateConstraintsRecords.push(where("date", "<=", endDate));
+                dateConstraintsExpenses.push(where("date", "<=", endDate));
+            }
+
+            const recordsQuery = getDocs(query(collection(db, DAILY_RECORDS_COLLECTION), ...dateConstraintsRecords));
+            const expensesQuery = getDocs(query(collection(db, EXPENSES_COLLECTION), ...dateConstraintsExpenses));
+
+            const [recordsSnap, expensesSnap] = await Promise.all([recordsQuery, expensesQuery]);
+            
+            const filteredRecords = recordsSnap.docs.map(doc => doc.data());
+            const filteredExpenses = expensesSnap.docs.map(doc => doc.data());
+
+            renderAnalytics(filteredRecords, filteredExpenses, startDate, endDate);
+        };
+        
+        // --- RENDER FUNCTIONS (Updating the UI) ---
+        
+        const renderInventory = (inventoryData) => {
+            // Inventory Tab
+            document.getElementById("stock-cover-cuts").textContent = inventoryData.stockCoverCut || 0;
+            document.getElementById("stock-foam-cuts").textContent = inventoryData.stockFoamCut || 0;
+            document.getElementById("stock-tailored-covers").textContent = inventoryData.stockTailoredCovers || 0;
+            document.getElementById("stock-products").textContent = inventoryData.stockFinishedProducts || 0;
+            document.getElementById("manualFoamStock").value = inventoryData.stockFoamCut || 0;
+
+            // Dashboard
+            document.getElementById("dashboard-finished-stock").textContent = inventoryData.stockFinishedProducts || 0;
+            document.getElementById("dashboard-sewn-stock").textContent = inventoryData.stockTailoredCovers || 0;
+
+
+            ["stock-cover-cuts", "stock-foam-cuts", "stock-tailored-covers", "stock-products"].forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                const stock = parseInt(el.textContent);
+                el.classList.toggle("text-red-500", stock < LOW_STOCK_THRESHOLD);
+                el.classList.toggle("font-extrabold", stock < LOW_STOCK_THRESHOLD);
+            });
+
+            // Low Stock Alerts
+            const lowStockList = document.getElementById('low-stock-list');
+            lowStockList.innerHTML = '';
+            let lowStockCount = 0;
+            const checkStock = (name, value) => {
+                if (value < LOW_STOCK_THRESHOLD) {
+                    const p = document.createElement('p');
+                    p.className = 'text-orange-700 font-semibold';
+                    p.textContent = `⚠️ ${name} is low! Only ${value} left.`;
+                    lowStockList.appendChild(p);
+                    lowStockCount++;
+                }
+            };
+            checkStock('Finished Products', inventoryData.stockFinishedProducts || 0);
+            checkStock('Sewn Covers', inventoryData.stockTailoredCovers || 0);
+            checkStock('Foam Cuts', inventoryData.stockFoamCut || 0);
+            checkStock('Cover Cuts', inventoryData.stockCoverCut || 0);
+            
+            if (lowStockCount === 0) {
+                 lowStockList.innerHTML = '<p class="text-center text-gray-500 italic">No low stock items. Great job!</p>';
+            }
+
+
+            const sewnDesigns = inventoryData.coverDesigns || {};
+            const cutDesigns = inventoryData.cutCoversByDesign || {};
+            const finishedDesigns = inventoryData.finishedProductsByDesign || {};
+            const allDesignNames = [...new Set([...Object.keys(sewnDesigns), ...Object.keys(cutDesigns), ...Object.keys(finishedDesigns)])].sort();
+
+            const sewnDetailContainer = document.getElementById("cover-designs-detail");
+            sewnDetailContainer.innerHTML = "";
+            if (allDesignNames.length === 0) {
+                sewnDetailContainer.innerHTML = '<p class="text-sm brown-text italic">No designs tracked yet.</p>';
+            } else {
+                allDesignNames.forEach(name => {
+                    sewnDetailContainer.innerHTML += `
+                        <div class="flex justify-between items-center text-sm bg-white/50 p-2 rounded-lg">
+                            <span class="brown-text">${name}:</span>
+                            <span class="font-bold yellow-text">${sewnDesigns[name] || 0}</span>
+                        </div>`;
+                });
+            }
+
+            const cutDetailContainer = document.getElementById("cut-covers-detail");
+            cutDetailContainer.innerHTML = "";
+             if (allDesignNames.length === 0) {
+                cutDetailContainer.innerHTML = '<p class="text-sm brown-text italic">No cut stock tracked yet.</p>';
+            } else {
+                allDesignNames.forEach(name => {
+                    cutDetailContainer.innerHTML += `
+                        <div class="flex justify-between items-center text-sm bg-white/50 p-2 rounded-lg">
+                            <span class="brown-text">${name}:</span>
+                            <span class="font-bold yellow-text">${cutDesigns[name] || 0}</span>
+                        </div>`;
+                });
+            }
+
+            const finishedDetailContainer = document.getElementById("finished-products-detail");
+            finishedDetailContainer.innerHTML = "";
+            if (allDesignNames.length === 0 && Object.keys(finishedDesigns).length === 0) {
+                finishedDetailContainer.innerHTML = '<p class="text-sm brown-text italic">No finished stock tracked yet.</p>';
+            } else {
+                allDesignNames.forEach(name => {
+                    finishedDetailContainer.innerHTML += `
+                        <div class="flex justify-between items-center text-sm bg-white/50 p-2 rounded-lg">
+                            <span class="brown-text">${name}:</span>
+                            <span class="font-bold pink-text">${finishedDesigns[name] || 0}</span>
+                        </div>`;
+                });
+            }
+            
+            renderStockAdjustmentForms(sewnDesigns, cutDesigns, finishedDesigns);
+            renderTailorProductivityInputs(allDesignNames);
+            renderProcessorProductivityInputs(allDesignNames);
+            renderAssembledProductivityInputs(allDesignNames);
+            renderSoldProductivityInputs(allDesignNames);
+        };
+
+        const renderProductivityInputs = (containerId, designs, totalInputId, totalDisplayId, prefix) => {
+            const container = document.getElementById(containerId);
+            container.innerHTML = "";
+
+            if (designs.length === 0) {
+                container.innerHTML = '<p class="text-sm text-center italic brown-text">No cover designs found. Add designs in the Inventory tab first.</p>';
+                return;
+            }
+            
+            const totalDisplayEl = totalDisplayId ? document.getElementById(totalDisplayId) : null;
+
+            designs.forEach(name => {
+                const div = document.createElement('div');
+                div.className = 'flex items-center justify-between';
+                div.innerHTML = `
+                    <label for="${prefix}-design-${name.replace(/\s+/g, '-')}" class="text-sm text-gray-700">${name}</label>
+                    <input type="number" id="${prefix}-design-${name.replace(/\s+/g, '-')}" data-design-name="${name}" name="${prefix}Design_${name}" min="0" value="0" class="w-24 text-center rounded-md border-gray-300 shadow-sm input-style !p-2 !text-sm">
+                `;
+                container.appendChild(div);
+            });
+
+            container.addEventListener('input', () => {
+                let total = 0;
+                container.querySelectorAll('input[type="number"]').forEach(input => {
+                    total += parseInt(input.value || 0);
+                });
+                document.getElementById(totalInputId).value = total;
+                if (totalDisplayEl) {
+                    totalDisplayEl.textContent = total;
+                }
+            });
+        };
+
+        const renderTailorProductivityInputs = (designs) => {
+            renderProductivityInputs('tailor-design-inputs', designs, 'tailoredCovers', 'tailoredCovers-total-display', 'sewn');
+        };
+
+        const renderProcessorProductivityInputs = (designs) => {
+            renderProductivityInputs('processor-design-inputs', designs, 'coverCuts', 'coverCuts-total-display', 'cut');
+        };
+
+        const renderAssembledProductivityInputs = (designs) => {
+            renderProductivityInputs('assembled-design-inputs', designs, 'completedMattresses', 'completedMattresses-total-display', 'assembled');
+        };
+
+        const renderSoldProductivityInputs = (designs) => {
+            renderProductivityInputs('sold-design-inputs', designs, 'productsSold', 'productsSold-total-display', 'sold');
+        };
+
+        const renderStockAdjustmentForms = (sewnDesigns, cutDesigns, finishedDesigns) => {
+            const sewnContainer = document.getElementById("current-design-list");
+            sewnContainer.innerHTML = "";
+            const cutContainer = document.getElementById("current-cut-design-list");
+            cutContainer.innerHTML = "";
+            const finishedContainer = document.getElementById("current-finished-design-list");
+            finishedContainer.innerHTML = "";
+
+            const addButtonsAndValue = (container, name, stockValue, type) => {
+                const designEl = document.createElement('div');
+                designEl.className = 'flex items-center space-x-2 bg-white/60 p-2 rounded-lg';
+                designEl.innerHTML = `
+                    <label class="flex-1 text-sm brown-text">${name}</label>
+                    <input type="number" value="${stockValue || 0}" min="0" class="w-20 text-center rounded-md border-gray-300 shadow-sm focus:border-pink-300 focus:ring focus:ring-pink-200 focus:ring-opacity-50">
+                    <button class="update-stock-btn text-xs bg-yellow-300 text-brown-text px-3 py-1 rounded-full hover:bg-yellow-400 transition">Update</button>
+                    <button class="edit-design-btn btn-edit">📝</button>
+                    <button class="delete-design-btn btn-delete">🗑️</button>
+                `;
+                container.appendChild(designEl);
+
+                designEl.querySelector('.update-stock-btn').addEventListener('click', () => {
+                    const newStock = designEl.querySelector('input').value;
+                    updateCoverDesignStock(name, newStock, type);
+                });
+                designEl.querySelector('.edit-design-btn').addEventListener('click', () => openEditDesignModal(name));
+                designEl.querySelector('.delete-design-btn').addEventListener('click', () => handleDeleteDesign(name));
+            };
+            
+            const sortedSewnKeys = Object.keys(sewnDesigns || {}).sort();
+            if(sortedSewnKeys.length > 0) {
+                sortedSewnKeys.forEach(name => {
+                    addButtonsAndValue(sewnContainer, name, sewnDesigns[name], 'sewn');
+                });
+            } else {
+                sewnContainer.innerHTML = '<p class="text-sm text-center italic brown-text">No sewn stock tracked.</p>';
+            }
+
+            const sortedCutKeys = Object.keys(cutDesigns || {}).sort();
+            if(sortedCutKeys.length > 0){
+                sortedCutKeys.forEach(name => {
+                    addButtonsAndValue(cutContainer, name, cutDesigns[name], 'cut');
+                });
+            } else {
+                cutContainer.innerHTML = '<p class="text-sm text-center italic brown-text">No cut stock tracked.</p>';
+            }
+
+            const allDesignKeys = [...new Set([...sortedSewnKeys, ...sortedCutKeys, ...Object.keys(finishedDesigns || {})])].sort();
+            if(allDesignKeys.length > 0){
+                 allDesignKeys.forEach(name => {
+                    addButtonsAndValue(finishedContainer, name, finishedDesigns[name], 'finished');
+                });
+            } else {
+                finishedContainer.innerHTML = '<p class="text-sm text-center italic brown-text">No finished stock tracked.</p>';
+            }
+        };
+
+        const renderOrders = (orders) => {
+            const tbody = document.getElementById("orders-body");
+            tbody.innerHTML = "";
+            let pendingDemand = 0;
+
+            if (orders.length === 0) {
+                document.getElementById("total-pending-demand").textContent = "0";
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 brown-text">No orders currently logged.</td></tr>';
+            } else {
+                 orders.forEach(order => {
+                    if (order.status === "Pending") {
+                        pendingDemand += order.quantity;
+                    }
+                    const dueDate = new Date(order.dueDate).toLocaleDateString();
+                    const statusClass = order.status === "Pending" ? "text-red-500 font-semibold" : "text-green-600";
+                    
+                    const actionButton = order.status === "Pending" 
+                        ? `<button data-order-id="${order.id}" class="btn-primary text-xs px-2 py-1 rounded-full shadow-sm">Complete</button>`
+                        : '<span class="text-xs text-green-600 font-medium">✨ Done</span>';
+                    
+                    const editButton = `<button data-order-edit='${JSON.stringify({id: order.id, clientName: order.clientName, quantity: order.quantity, dueDate: order.dueDate})}' class="text-xs bg-yellow-300 text-brown-text px-3 py-1 rounded-full hover:bg-yellow-400 transition">Edit 📝</button>`;
+                    
+                    const row = tbody.insertRow();
+                    row.className = `border-b border-yellow-200 hover:bg-yellow-50 text-brown-text ${order.status === "Pending" ? "bg-red-50/50" : "bg-green-50/50"}`;
+                    row.innerHTML = `
+                        <td class="p-2">${order.clientName}</td>
+                        <td class="p-2 text-center">${order.quantity}</td>
+                        <td class="p-2 text-center">${dueDate}</td>
+                        <td class="p-2 text-center"><span class="${statusClass}">${order.status}</span></td>
+                        <td class="p-2 text-center">${actionButton}</td>
+                        <td class="p-2 text-center">${editButton}</td>
+                    `;
+                });
+            }
+
+            tbody.querySelectorAll('[data-order-id]').forEach(button => {
+                button.addEventListener('click', () => handleCompleteOrder(button.dataset.orderId));
+            });
+            tbody.querySelectorAll('[data-order-edit]').forEach(button => {
+                button.addEventListener('click', () => loadOrderForEdit(JSON.parse(button.dataset.orderEdit)));
+            });
+
+            document.getElementById("total-pending-demand").textContent = pendingDemand;
+            document.getElementById("dashboard-pending-orders").textContent = pendingDemand;
+        };
+
+        const renderPaymentsHistory = (payments) => {
+            const tbody = document.getElementById("payments-body");
+            tbody.innerHTML = "";
+            if (payments.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4 brown-text">No payments logged yet.</td></tr>';
+                return;
+            }
+            payments.forEach(p => {
+                const paymentDate = p.timestamp ? new Date(p.timestamp.seconds * 1000).toLocaleDateString() : new Date().toLocaleDateString();
+                const editPayload = { id: p.id, amount: p.amount, recipient: p.recipient, notes: p.notes };
+                const row = tbody.insertRow();
+                row.className = "border-b border-yellow-200 hover:bg-yellow-50 text-brown-text";
+                row.innerHTML = `
+                    <td class="p-2">${paymentDate}</td>
+                    <td class="p-2 text-right font-medium text-green-600">${formatPHP(p.amount)}</td>
+                    <td class="p-2 text-left text-sm text-gray-500">${p.recipient || "N/A"}: ${p.notes || "N/A"}</td>
+                    <td class="p-2 text-center">
+                        <button data-payment-edit='${JSON.stringify(editPayload)}' class="text-xs bg-yellow-300 text-brown-text px-3 py-1 rounded-full hover:bg-yellow-400 transition">Edit 📝</button>
+                        <button data-payment-id="${p.id}" data-payment-info="${formatPHP(p.amount)} for ${p.recipient}" class="btn-delete ml-1">Delete</button>
+                    </td>
+                `;
+            });
+             tbody.querySelectorAll('[data-payment-edit]').forEach(button => {
+                button.addEventListener('click', () => loadPaymentForEdit(JSON.parse(button.dataset.paymentEdit)));
+            });
+            tbody.querySelectorAll('[data-payment-id]').forEach(button => {
+                button.addEventListener('click', () => handleDeletePaymentRecord(button.dataset.paymentId, button.dataset.paymentInfo));
+            });
+        };
+
+        const renderRecordsHistory = (records) => {
+            const tbody = document.getElementById("history-body");
+            tbody.innerHTML = "";
+            if (records.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4 brown-text">No daily production records yet.</td></tr>';
+                return;
+            }
+            records.forEach(rec => {
+                const date = rec.date || (rec.timestamp ? new Date(rec.timestamp.seconds * 1000).toLocaleDateString() : "N/A");
+                const laborIncurred = (rec.tailoredCovers || 0) * appCosts.tailorRate + (rec.coverCuts || 0) * appCosts.cutter1Rate + (rec.foamCuts || 0) * appCosts.cutter2Rate;
+                const revenue = (rec.productsSold || 0) * appCosts.sellingPrice;
+                
+                let sewnDesignsTooltip = "No specific designs logged.";
+                if (rec.sewnCoversByDesign && Object.keys(rec.sewnCoversByDesign).length > 0) {
+                    sewnDesignsTooltip = Object.entries(rec.sewnCoversByDesign)
+                        .map(([design, qty]) => `${design}: ${qty}`)
+                        .join('; ');
+                }
+
+                let cutDesignsTooltip = "No specific designs logged.";
+                if (rec.cutCoversByDesign && Object.keys(rec.cutCoversByDesign).length > 0) {
+                    cutDesignsTooltip = Object.entries(rec.cutCoversByDesign)
+                        .map(([design, qty]) => `${design}: ${qty}`)
+                        .join('; ');
+                }
+                
+                let assembledDesignsTooltip = "No specific designs logged.";
+                if (rec.assembledMattressesByDesign && Object.keys(rec.assembledMattressesByDesign).length > 0) {
+                    assembledDesignsTooltip = Object.entries(rec.assembledMattressesByDesign)
+                        .map(([design, qty]) => `${design}: ${qty}`)
+                        .join('; ');
+                }
+
+                let soldDesignsTooltip = "No specific designs logged.";
+                if (rec.soldMattressesByDesign && Object.keys(rec.soldMattressesByDesign).length > 0) {
+                    soldDesignsTooltip = Object.entries(rec.soldMattressesByDesign)
+                        .map(([design, qty]) => `${design}: ${qty}`)
+                        .join('; ');
+                }
+
+                const editPayload = JSON.stringify(rec);
+
+                const row = tbody.insertRow();
+                row.className = "border-b border-yellow-200 hover:bg-yellow-50 text-brown-text";
+                row.innerHTML = `
+                    <td class="p-2">${date}</td>
+                    <td class="p-2 text-center" title="${sewnDesignsTooltip}">${rec.tailoredCovers || 0}</td>
+                    <td class="p-2 text-center" title="${cutDesignsTooltip}">${rec.coverCuts || 0}</td>
+                    <td class="p-2 text-center">${rec.foamCuts || 0}</td>
+                    <td class="p-2 text-center" title="${assembledDesignsTooltip}">${rec.completedMattresses || 0}</td>
+                    <td class="p-2 text-center" title="${soldDesignsTooltip}">${rec.productsSold || 0}</td>
+                    <td class="p-2 text-right font-medium">${formatPHP(revenue)}</td>
+                    <td class="p-2 text-right">${formatPHP(laborIncurred)}</td>
+                    <td class="p-2 text-center">
+                        <button data-record-edit='${editPayload}' class="text-xs bg-yellow-300 text-brown-text px-3 py-1 rounded-full hover:bg-yellow-400 transition">Edit 📝</button>
+                        <button data-record-id="${rec.id}" data-record-date="${date}" class="btn-delete ml-1">Delete</button>
+                    </td>
+                `;
+            });
+            tbody.querySelectorAll('[data-record-edit]').forEach(button => {
+                button.addEventListener('click', () => loadRecordForEdit(JSON.parse(button.dataset.recordEdit)));
+            });
+            tbody.querySelectorAll('[data-record-id]').forEach(button => {
+                button.addEventListener('click', () => handleDeleteProductionRecord(button.dataset.recordId, button.dataset.recordDate));
+            });
+        };
+        
+        const renderExpensesList = (expenses) => {
+            const tbody = document.getElementById("expenses-body");
+            tbody.innerHTML = "";
+            if (expenses.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center py-4 brown-text">No expenses logged yet.</td></tr>';
+                return;
+            }
+            expenses.forEach(exp => {
+                const row = tbody.insertRow();
+                row.className = "border-b border-pink-200 hover:bg-pink-50 text-brown-text";
+                row.innerHTML = `
+                    <td class="p-2">${exp.date}</td>
+                    <td class="p-2">${exp.category || 'N/A'}</td>
+                    <td class="p-2">${exp.description}</td>
+                    <td class="p-2 text-right font-medium text-red-600">${formatPHP(exp.amount)}</td>
+                    <td class="p-2 text-center"><button data-expense-id="${exp.id}" class="btn-delete">Delete</button></td>
+                `;
+            });
+            tbody.querySelectorAll('[data-expense-id]').forEach(button => {
+                button.addEventListener('click', () => handleDeleteExpense(button.dataset.expenseId, button.closest('tr').querySelector('td:nth-child(3)').textContent));
+            });
+        };
+
+        const renderSuppliersList = (suppliers) => {
+            const container = document.getElementById("suppliers-list");
+            container.innerHTML = "";
+            if (suppliers.length === 0) {
+                container.innerHTML = '<p class="text-center text-sm brown-text italic">No suppliers added yet.</p>';
+                return;
+            }
+            suppliers.forEach(s => {
+                container.innerHTML += `
+                    <div class="p-3 bg-white/60 rounded-lg border border-yellow-200">
+                        <h4 class="font-bold brown-text">${s.name}</h4>
+                        <p class="text-sm text-gray-600">${s.material}</p>
+                        <p class="text-sm font-medium text-pink-text">${s.contact}</p>
+                    </div>`;
+            });
+        };
+
+        const renderDefectsList = (defects) => {
+            const tbody = document.getElementById("defects-body");
+            tbody.innerHTML = "";
+            if (defects.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4 brown-text italic">No defective items logged.</td></tr>';
+                return;
+            }
+            defects.forEach(d => {
+                const row = tbody.insertRow();
+                row.className = "border-b border-red-200 hover:bg-red-100 text-brown-text";
+                const actionText = (d.status === 'To Be Disposed') ? 'Dispose' : 'Resolve';
+                row.innerHTML = `
+                    <td class="p-2">
+                        <span class="font-semibold">${d.itemType}</span>
+                        <p class="text-xs text-gray-500">${d.notes || 'No notes'}</p>
+                    </td>
+                    <td class="p-2 text-center">${d.quantity}</td>
+                    <td class="p-2 text-left">${d.status}</td>
+                    <td class="p-2 text-center"><button data-defect-id="${d.id}" data-defect-desc="${d.quantity} ${d.itemType}(s)" class="btn-delete">${actionText}</button></td>
+                `;
+            });
+            tbody.querySelectorAll('[data-defect-id]').forEach(button => {
+                button.addEventListener('click', () => handleResolveDefect(button.dataset.defectId, button.dataset.defectDesc));
+            });
+        };
+
+        // --- ANALYTICS & CHARTING ---
+
+        const renderAnalytics = (filteredRecords, filteredExpenses, startDate, endDate) => {
+            // --- Calculations ---
+            let totalRevenue = 0, totalCOGS = 0;
+            
+            // Calculations for the filtered date range
+            filteredRecords.forEach(rec => {
+                totalRevenue += (rec.productsSold || 0) * appCosts.sellingPrice;
+                totalCOGS += (rec.productsSold || 0) * appCosts.materialCost;
+            });
+            
+            const totalOtherExpenses = filteredExpenses.reduce((sum, exp) => sum + (exp.amount || 0), 0);
+            const totalLaborInRange = filteredRecords.reduce((sum, rec) => sum + ((rec.tailoredCovers || 0) * appCosts.tailorRate) + ((rec.coverCuts || 0) * appCosts.cutter1Rate) + ((rec.foamCuts || 0) * appCosts.cutter2Rate), 0);
+            const netProfit = totalRevenue - totalCOGS - totalLaborInRange - totalOtherExpenses;
+
+            // --- Update DOM ---
+            document.getElementById("dashboard-net-profit").textContent = formatPHP(netProfit);
+            document.getElementById("total-revenue").textContent = formatPHP(totalRevenue);
+            document.getElementById("total-cogs").textContent = formatPHP(totalCOGS);
+            document.getElementById("total-expenses").textContent = formatPHP(totalOtherExpenses);
+            document.getElementById("net-profit").textContent = formatPHP(netProfit);
+
+            // Owner shares on Analytics tab
+            const ownerSharesContainer = document.getElementById("owner-shares");
+            ownerSharesContainer.innerHTML = "";
+            (appCosts.owners || []).forEach((owner, index) => {
+                const div = document.createElement('div');
+                div.className = 'flex items-center space-x-2';
+                div.innerHTML = `
+                    <input type="text" value="${owner.name}" data-index="${index}" name="analyticsOwnerName" class="w-full rounded-lg input-style !p-2 !text-sm" placeholder="Owner Name">
+                    <input type="number" value="${owner.share * 100}" data-index="${index}" name="analyticsOwnerShare" class="w-24 text-center rounded-lg input-style !p-2 !text-sm" placeholder="%">
+                    <span class="flex-1 text-right yellow-text font-extrabold text-lg">${formatPHP(netProfit * owner.share)}</span>
+                `;
+                ownerSharesContainer.appendChild(div);
+            });
+
+            renderSalesChart(filteredRecords, startDate, endDate);
+            renderExpenseChart(filteredExpenses);
+        };
+        
+        const renderSalesChart = (records, startDate, endDate) => {
+            const salesData = {};
+            
+            if (startDate && endDate) {
+                let current = new Date(startDate);
+                let end = new Date(endDate);
+                while(current <= end) {
+                    salesData[current.toISOString().split('T')[0]] = 0;
+                    current.setDate(current.getDate() + 1);
+                }
+            } else { // Default to last 14 days
+                for (let i = 0; i < 14; i++) {
+                    const d = new Date();
+                    d.setDate(d.getDate() - i);
+                    salesData[d.toISOString().split('T')[0]] = 0;
+                }
+            }
+
+            records.forEach(rec => {
+                if (salesData[rec.date] !== undefined) {
+                    salesData[rec.date] += (rec.productsSold || 0) * appCosts.sellingPrice;
+                }
+            });
+
+            const labels = Object.keys(salesData).sort();
+            const data = labels.map(label => salesData[label]);
+
+            const ctx = document.getElementById('salesChart').getContext('2d');
+            
+            if (salesChart) salesChart.destroy();
+            
+            salesChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Daily Sales (PHP)',
+                        data: data,
+                        backgroundColor: '#F9A8D4',
+                        borderColor: '#BE185D',
+                        borderWidth: 2,
+                        borderRadius: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true, ticks: { callback: value => `₱${value}` } },
+                        x: { ticks: { maxRotation: 45, minRotation: 45 } }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        title: { display: true, text: 'Sales Data', font: { size: 18, family: 'Fredoka' }, color: '#854D0E' }
+                    }
+                }
+            });
+        };
+
+        const renderExpenseChart = (expenses) => {
+            const expenseData = {};
+            expenses.forEach(exp => {
+                const category = exp.category || 'Other';
+                expenseData[category] = (expenseData[category] || 0) + exp.amount;
+            });
+
+            const labels = Object.keys(expenseData);
+            const data = Object.values(expenseData);
+
+            const ctx = document.getElementById('expenseChart').getContext('2d');
+            if (expenseChart) expenseChart.destroy();
+
+            expenseChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Expenses by Category',
+                        data: data,
+                        backgroundColor: [
+                            '#F9A8D4', // Pink
+                            '#FBBF24', // Yellow
+                            '#A7F3D0', // Green
+                            '#BFDBFE', // Blue
+                            '#E5E7EB', // Gray
+                        ],
+                        borderColor: '#fff',
+                        borderWidth: 3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'top' },
+                        title: { display: false }
+                    }
+                }
+            });
+        };
+
+        const renderCostingForm = () => {
+            document.getElementById('costSellingPrice').value = appCosts.sellingPrice;
+            document.getElementById('costMaterialCost').value = appCosts.materialCost;
+            document.getElementById('costTailorRate').value = appCosts.tailorRate;
+            document.getElementById('costCutter1Rate').value = appCosts.cutter1Rate;
+            document.getElementById('costCutter2Rate').value = appCosts.cutter2Rate;
+            
+            const ownerSharesContainer = document.getElementById('owner-shares-settings');
+            ownerSharesContainer.innerHTML = '';
+            (appCosts.owners || []).forEach((owner, index) => {
+                const div = document.createElement('div');
+                div.className = 'flex items-center space-x-2';
+                div.innerHTML = `
+                    <input type="text" value="${owner.name}" data-index="${index}" name="ownerName" class="w-full rounded-lg input-style !p-2 !text-sm" placeholder="Owner Name">
+                    <input type="number" value="${owner.share * 100}" data-index="${index}" name="ownerShare" class="w-24 text-center rounded-lg input-style !p-2 !text-sm" placeholder="%">
+                `;
+                ownerSharesContainer.appendChild(div);
+            });
+
+            // Update labels across the app
+            document.querySelectorAll('.tailor-rate-display').forEach(el => el.textContent = appCosts.tailorRate);
+            document.querySelectorAll('.cutter1-rate-display').forEach(el => el.textContent = appCosts.cutter1Rate);
+            document.querySelectorAll('.cutter2-rate-display').forEach(el => el.textContent = appCosts.cutter2Rate);
+            document.querySelectorAll('.selling-price-display').forEach(el => el.textContent = appCosts.sellingPrice);
+        };
+
+
+        // --- FORM HANDLERS & DATA SUBMISSION ---
+
+        const handleDailyEntry = async (event) => {
+            event.preventDefault();
+            const form = event.target;
+            const date = form.date.value;
+            
+            const sewnCoversByDesign = {};
+            document.querySelectorAll('#tailor-design-inputs input[type="number"]').forEach(input => {
+                const quantity = parseInt(input.value || 0);
+                if (quantity > 0) sewnCoversByDesign[input.dataset.designName] = quantity;
+            });
+            
+            const cutCoversByDesign = {};
+            document.querySelectorAll('#processor-design-inputs input[type="number"]').forEach(input => {
+                const quantity = parseInt(input.value || 0);
+                if (quantity > 0) cutCoversByDesign[input.dataset.designName] = quantity;
+            });
+
+            const assembledMattressesByDesign = {};
+            document.querySelectorAll('#assembled-design-inputs input[type="number"]').forEach(input => {
+                const quantity = parseInt(input.value || 0);
+                if (quantity > 0) assembledMattressesByDesign[input.dataset.designName] = quantity;
+            });
+
+            const soldMattressesByDesign = {};
+            document.querySelectorAll('#sold-design-inputs input[type="number"]').forEach(input => {
+                const quantity = parseInt(input.value || 0);
+                if (quantity > 0) soldMattressesByDesign[input.dataset.designName] = quantity;
+            });
+
+            const newData = {
+                tailoredCovers: parseInt(form.tailoredCovers.value || 0),
+                sewnCoversByDesign: sewnCoversByDesign,
+                coverCuts: parseInt(form.coverCuts.value || 0),
+                cutCoversByDesign: cutCoversByDesign,
+                foamCuts: parseInt(form.foamCuts.value || 0),
+                completedMattresses: parseInt(form.completedMattresses.value || 0),
+                assembledMattressesByDesign: assembledMattressesByDesign,
+                productsSold: parseInt(form.productsSold.value || 0),
+                soldMattressesByDesign: soldMattressesByDesign,
+            };
+            const statusEl = document.getElementById("status-message-daily");
+
+            const totalInputs = Object.values(newData).reduce((sum, val) => {
+                if (typeof val === 'number') return sum + val;
+                if (typeof val === 'object') return sum + Object.values(val).reduce((s, v) => s + v, 0);
+                return sum;
+            }, 0);
+
+            if (!date || totalInputs === 0) {
+                statusEl.textContent = "🐥 Please select a date and enter at least one value.";
+                statusEl.className = "text-sm text-red-600";
+                return;
+            }
+
+            try {
+                statusEl.textContent = "Saving...";
+                statusEl.className = "text-sm text-gray-500";
+                
+                const calculateMapDiff = (newMap, oldMap) => {
+                    const diff = {};
+                    const allKeys = new Set([...Object.keys(newMap || {}), ...Object.keys(oldMap || {})]);
+                    allKeys.forEach(key => {
+                        const diffValue = (newMap?.[key] || 0) - (oldMap?.[key] || 0);
+                        if (diffValue !== 0) {
+                            diff[key] = diffValue;
+                        }
+                    });
+                    return diff;
+                };
+
+                await runTransaction(db, async (transaction) => {
+                    const inventoryRef = doc(db, INVENTORY_DOC_PATH);
+                    const recordRef = doc(db, DAILY_RECORDS_COLLECTION, date);
+
+                    const [inventorySnap, recordSnap] = await Promise.all([
+                        transaction.get(inventoryRef),
+                        transaction.get(recordRef)
+                    ]);
+
+                    const inv = inventorySnap.exists() ? inventorySnap.data() : {};
+                    const oldData = recordSnap.exists() ? recordSnap.data() : {};
+
+                    const cutStock = { ...(inv.cutCoversByDesign || {}) };
+                    const sewnStock = { ...(inv.coverDesigns || {}) };
+                    const finishedStock = { ...(inv.finishedProductsByDesign || {}) };
+
+                    // 1. Handle Cover Cuts (adds to cutStock)
+                    const cutDiff = calculateMapDiff(newData.cutCoversByDesign, oldData.cutCoversByDesign);
+                    Object.entries(cutDiff).forEach(([design, qty]) => {
+                        cutStock[design] = (cutStock[design] || 0) + qty;
+                    });
+
+                    // 2. Handle Covers Sewn (moves from cutStock to sewnStock)
+                    const sewnDiff = calculateMapDiff(newData.sewnCoversByDesign, oldData.sewnCoversByDesign);
+                    Object.entries(sewnDiff).forEach(([design, qty]) => {
+                        sewnStock[design] = (sewnStock[design] || 0) + qty;
+                        cutStock[design] = (cutStock[design] || 0) - qty; // Consume cut stock
+                        if (cutStock[design] < 0) throw new Error(`Not enough cut stock for "${design}" to sew ${qty}.`);
+                    });
+
+                    // 3. Handle Mattresses Assembled (moves from sewnStock to finishedStock)
+                    const assembledDiff = calculateMapDiff(newData.assembledMattressesByDesign, oldData.assembledMattressesByDesign);
+                    let totalAssembledDiff = 0;
+                    Object.entries(assembledDiff).forEach(([design, qty]) => {
+                        finishedStock[design] = (finishedStock[design] || 0) + qty;
+                        sewnStock[design] = (sewnStock[design] || 0) - qty; // Consume sewn stock
+                        if (sewnStock[design] < 0) throw new Error(`Not enough sewn covers for "${design}" to assemble ${qty}.`);
+                        totalAssembledDiff += qty;
+                    });
+
+                    // 4. Handle Products Sold (removes from finishedStock)
+                    const soldDiff = calculateMapDiff(newData.soldMattressesByDesign, oldData.soldMattressesByDesign);
+                    Object.entries(soldDiff).forEach(([design, qty]) => {
+                        finishedStock[design] = (finishedStock[design] || 0) - qty;
+                        if (finishedStock[design] < 0) throw new Error(`Not enough finished stock for "${design}" to sell ${qty}.`);
+                    });
+
+                    // 5. Update Foam Stock
+                    const foamCutsDiff = (newData.foamCuts || 0) - (oldData.foamCuts || 0);
+                    const newFoamStock = (inv.stockFoamCut || 0) + foamCutsDiff - totalAssembledDiff;
+
+                    // 6. Recalculate all totals from the design maps
+                    const newTotalCut = Object.values(cutStock).reduce((a, b) => a + b, 0);
+                    const newTotalSewn = Object.values(sewnStock).reduce((a, b) => a + b, 0);
+                    const newTotalFinished = Object.values(finishedStock).reduce((a, b) => a + b, 0);
+
+                    const updatedInventory = {
+                        ...inv,
+                        cutCoversByDesign: cutStock,
+                        coverDesigns: sewnStock,
+                        finishedProductsByDesign: finishedStock,
+                        stockFoamCut: Math.max(0, newFoamStock),
+                        stockCoverCut: Math.max(0, newTotalCut),
+                        stockTailoredCovers: Math.max(0, newTotalSewn),
+                        stockFinishedProducts: Math.max(0, newTotalFinished),
+                    };
+                    
+                    transaction.set(inventoryRef, updatedInventory);
+                    transaction.set(recordRef, { ...newData, date, timestamp: serverTimestamp() });
+                });
+
+                statusEl.textContent = `✨ Daily entry for ${date} UPDATED successfully!`;
+                statusEl.className = "text-sm text-green-600";
+                form.reset();
+                 document.querySelectorAll('#tailor-design-inputs input, #processor-design-inputs input, #assembled-design-inputs input, #sold-design-inputs input, #foamCuts').forEach(input => input.value = 0);
+                document.getElementById('date').value = getTodayDate();
+                ['tailoredCovers', 'coverCuts', 'completedMattresses', 'productsSold'].forEach(id => {
+                    document.getElementById(id).value = 0;
+                    document.getElementById(id+'-total-display').textContent = 0;
+                });
+
+            } catch (error) {
+                console.error("Error in daily entry transaction:", error);
+                showAlertModal('Inventory Error', `The transaction failed. The system reported: <br><strong class="text-red-600">${error.message}</strong>`);
+                statusEl.textContent = `Transaction failed: ${error.message}.`;
+                statusEl.className = "text-sm text-red-600";
+            }
+        };
+
+        const handleSalaryPayment = async (event) => {
+            event.preventDefault();
+            const form = event.target;
+            const paymentId = form.paymentId.value;
+            const data = {
+                amount: parseFloat(form.paymentAmount.value),
+                recipient: form.paymentRecipient.value,
+                notes: form.paymentNotes.value,
+            };
+            const statusEl = document.getElementById("status-payment");
+
+            if (isNaN(data.amount) || data.amount <= 0 || !data.recipient) {
+                statusEl.textContent = "⚠️ Please enter a valid amount and recipient.";
+                statusEl.className = "text-sm text-red-600";
+                return;
+            }
+
+            try {
+                statusEl.textContent = "Logging payment...";
+                statusEl.className = "text-sm text-gray-500";
+                if (paymentId) {
+                    await updateDoc(doc(db, LABOR_PAYMENTS_COLLECTION, paymentId), { ...data, timestamp: serverTimestamp() });
+                    statusEl.textContent = "💖 Payment log UPDATED successfully!";
+                } else {
+                    await addDoc(collection(db, LABOR_PAYMENTS_COLLECTION), { ...data, timestamp: serverTimestamp() });
+                    statusEl.textContent = `💖 Payment of ${formatPHP(data.amount)} logged!`;
+                }
+                statusEl.className = "text-sm text-green-600";
+                resetPaymentForm();
+            } catch (error) {
+                console.error("Error logging salary payment:", error);
+                statusEl.textContent = `Payment failed: ${error.message}.`;
+                statusEl.className = "text-sm text-red-600";
+            }
+        };
+        
+        const handleLaborAdjustment = async (event) => {
+            event.preventDefault();
+            const form = document.getElementById('adjustment-form');
+            const data = {
+                amount: parseFloat(form.adjustmentAmount.value),
+                recipient: form.adjustmentRecipient.value,
+                notes: form.adjustmentNotes.value.trim(),
+            };
+            
+            if (isNaN(data.amount) || data.amount <= 0 || !data.recipient) {
+                // Should not happen with validation but good to have
+                return;
+            }
+
+            try {
+                await addDoc(collection(db, LABOR_ADJUSTMENTS_COLLECTION), { ...data, timestamp: serverTimestamp() });
+                document.getElementById('adjustment-modal').classList.add('hidden');
+                form.reset();
+            } catch (error) {
+                console.error("Error logging labor adjustment:", error);
+                showAlertModal('Error', `Could not save adjustment: ${error.message}`);
+            }
+        };
+
+        const handleNewOrder = async (event) => {
+            event.preventDefault();
+            const form = event.target;
+            const orderId = form.orderId.value;
+            const data = {
+                clientName: form.clientName.value.trim() || "Valued Customer",
+                quantity: parseInt(form.orderQuantity.value || 0),
+                dueDate: form.orderDueDate.value,
+            };
+            const statusEl = document.getElementById("status-message-order");
+
+            if (data.quantity <= 0 || !data.dueDate) {
+                statusEl.textContent = "⚠️ Quantity must be > 0 and Due Date is required.";
+                statusEl.className = "text-sm text-red-600";
+                return;
+            }
+
+            try {
+                 statusEl.textContent = "Saving order...";
+                 statusEl.className = "text-sm text-gray-500";
+                if (orderId) {
+                    await updateDoc(doc(db, ORDER_TRACKER_COLLECTION, orderId), { ...data, timestamp: serverTimestamp() });
+                    statusEl.textContent = "🎉 Order UPDATED successfully!";
+                } else {
+                    await addDoc(collection(db, ORDER_TRACKER_COLLECTION), { ...data, status: "Pending", timestamp: serverTimestamp() });
+                    statusEl.textContent = `🎉 Order for ${data.quantity} units logged!`;
+                }
+                statusEl.className = "text-sm text-green-600";
+                resetOrderForm();
+            } catch (error) {
+                console.error("Error logging new order:", error);
+                statusEl.textContent = `Order failed: ${error.message}.`;
+                statusEl.className = "text-sm text-red-600";
+            }
+        };
+
+        const handleCompleteOrder = async (orderId) => {
+             showConfirmationModal(
+                '🐥 Confirm Completion',
+                'Mark this order as <strong>Completed</strong>? This cannot be undone.',
+                async () => {
+                    try {
+                        await updateDoc(doc(db, ORDER_TRACKER_COLLECTION, orderId), { status: "Completed", completionDate: getTodayDate() });
+                    } catch (error) {
+                        console.error("Error completing order:", error);
+                    }
+                }
+            );
+        };
+        
+        const handleNewExpense = async (event) => {
+            event.preventDefault();
+            const form = document.getElementById("expense-form");
+            const data = {
+                date: form.expenseDate.value,
+                category: form.expenseCategory.value,
+                description: form.expenseDesc.value.trim(),
+                amount: parseFloat(form.expenseAmount.value),
+            };
+            if (!data.date || !data.category || !data.description || isNaN(data.amount) || data.amount <= 0) return;
+            
+            await addDoc(collection(db, EXPENSES_COLLECTION), { ...data, timestamp: serverTimestamp() });
+            form.reset();
+            document.getElementById('expenseDate').value = getTodayDate();
+        };
+
+        const handleDeleteExpense = async (expenseId, description) => {
+            showConfirmationModal(
+                '🗑️ Delete Expense',
+                `Are you sure you want to delete the expense: "${description}"?`,
+                async () => {
+                    try {
+                        await deleteDoc(doc(db, EXPENSES_COLLECTION, expenseId));
+                    } catch (error) {
+                        console.error("Error deleting expense:", error);
+                    }
+                }
+            );
+        };
+
+        const handleNewSupplier = async (event) => {
+            event.preventDefault();
+            const form = document.getElementById("supplier-form");
+            const data = {
+                name: form.supplierName.value.trim(),
+                contact: form.supplierContact.value.trim(),
+                material: form.supplierMaterial.value.trim(),
+            };
+            if (!data.name || !data.contact || !data.material) return;
+
+            await addDoc(collection(db, SUPPLIERS_COLLECTION), data);
+            form.reset();
+        };
+
+        const handleNewDefect = async (event) => {
+            event.preventDefault();
+            const form = document.getElementById("defect-form");
+            const data = {
+                itemType: form.defectItemType.value,
+                quantity: parseInt(form.defectQuantity.value || 0),
+                status: form.defectStatus.value,
+                notes: form.defectNotes.value.trim(),
+            };
+            if (!data.itemType || !data.status || data.quantity <= 0) {
+                showAlertModal("Invalid Input", "Please fill out all fields with valid values.");
+                return;
+            }
+            await addDoc(collection(db, DEFECTS_COLLECTION), { ...data, timestamp: serverTimestamp() });
+            form.reset();
+        };
+
+        const handleResolveDefect = (defectId, description) => {
+            showConfirmationModal(
+                '🛠️ Resolve Item',
+                `Are you sure you want to mark this item as resolved/disposed?<br><strong>${description}</strong>`,
+                async () => {
+                    try {
+                        await deleteDoc(doc(db, DEFECTS_COLLECTION, defectId));
+                    } catch (error) {
+                        console.error("Error resolving defect:", error);
+                    }
+                }
+            );
+        };
+        
+        const handleDeletePaymentRecord = (paymentId, info) => {
+            showConfirmationModal(
+                '🗑️ Delete Payment',
+                `Are you sure you want to delete this payment record?<br><strong>${info}</strong>`,
+                async () => {
+                    try {
+                        await deleteDoc(doc(db, LABOR_PAYMENTS_COLLECTION, paymentId));
+                    } catch (error) {
+                        console.error("Error deleting payment record:", error);
+                    }
+                }
+            );
+        };
+
+        const handleDeleteProductionRecord = (recordId, date) => {
+            showConfirmationModal(
+                '🗑️ Delete Production Record',
+                `Are you sure you want to delete the record for <strong>${date}</strong>? <br><strong class="text-red-600">This will reverse all associated inventory changes and cannot be undone.</strong>`,
+                async () => {
+                    try {
+                        await runTransaction(db, async (transaction) => {
+                            const recordRef = doc(db, DAILY_RECORDS_COLLECTION, recordId);
+                            const inventoryRef = doc(db, INVENTORY_DOC_PATH);
+
+                            const [recordSnap, inventorySnap] = await Promise.all([
+                                transaction.get(recordRef),
+                                transaction.get(inventoryRef)
+                            ]);
+
+                            if (!recordSnap.exists()) throw new Error("Record to delete not found.");
+                            
+                            const recordData = recordSnap.data();
+                            const inv = inventorySnap.exists() ? inventorySnap.data() : {};
+                            
+                            const cutStock = { ...(inv.cutCoversByDesign || {}) };
+                            const sewnStock = { ...(inv.coverDesigns || {}) };
+                            const finishedStock = { ...(inv.finishedProductsByDesign || {}) };
+
+                            // Reverse Cover Cuts
+                            const cutDesignsInRecord = recordData.cutCoversByDesign || {};
+                            Object.entries(cutDesignsInRecord).forEach(([design, qty]) => {
+                                cutStock[design] = (cutStock[design] || 0) - qty;
+                            });
+
+                            // Reverse Covers Sewn
+                            const sewnDesignsInRecord = recordData.sewnCoversByDesign || {};
+                            Object.entries(sewnDesignsInRecord).forEach(([design, qty]) => {
+                                sewnStock[design] = (sewnStock[design] || 0) - qty;
+                                cutStock[design] = (cutStock[design] || 0) + qty;
+                            });
+
+                            // Reverse Mattresses Assembled
+                            const assembledDesignsInRecord = recordData.assembledMattressesByDesign || {};
+                            let totalAssembledInRecord = 0;
+                            Object.entries(assembledDesignsInRecord).forEach(([design, qty]) => {
+                                finishedStock[design] = (finishedStock[design] || 0) - qty;
+                                sewnStock[design] = (sewnStock[design] || 0) + qty;
+                                totalAssembledInRecord += qty;
+                            });
+
+                            // Reverse Products Sold
+                            const soldDesignsInRecord = recordData.soldMattressesByDesign || {};
+                            Object.entries(soldDesignsInRecord).forEach(([design, qty]) => {
+                                finishedStock[design] = (finishedStock[design] || 0) + qty;
+                            });
+
+                            // Reverse Foam Cuts & Consumption
+                            const foamCutsInRecord = recordData.foamCuts || 0;
+                            const newFoamStock = (inv.stockFoamCut || 0) - foamCutsInRecord + totalAssembledInRecord;
+                            
+                            // Recalculate totals
+                            const newTotalCut = Object.values(cutStock).reduce((a, b) => a + b, 0);
+                            const newTotalSewn = Object.values(sewnStock).reduce((a, b) => a + b, 0);
+                            const newTotalFinished = Object.values(finishedStock).reduce((a, b) => a + b, 0);
+
+                            const updatedInventory = { 
+                                ...inv, 
+                                cutCoversByDesign: cutStock, 
+                                coverDesigns: sewnStock,
+                                finishedProductsByDesign: finishedStock,
+                                stockFoamCut: Math.max(0, newFoamStock),
+                                stockCoverCut: Math.max(0, newTotalCut),
+                                stockTailoredCovers: Math.max(0, newTotalSewn),
+                                stockFinishedProducts: Math.max(0, newTotalFinished),
+                            };
+                            
+                            transaction.set(inventoryRef, updatedInventory);
+                            transaction.delete(recordRef);
+                        });
+                    } catch (error) {
+                        console.error("Error deleting production record:", error);
+                    }
+                }
+            );
+        };
+
+        const handleNewDesign = async (event) => {
+            event.preventDefault();
+            const form = event.target;
+            const designName = form.designName.value.trim().replace(/[^a-zA-Z0-9\s]/g, "");
+            const initialStock = parseInt(form.initialStock.value || 0);
+            const statusEl = document.getElementById("design-status-message");
+
+            if (!designName || initialStock < 0) {
+                statusEl.textContent = "⚠️ Please enter a valid name and non-negative stock.";
+                statusEl.className = "text-sm text-red-600 block";
+                return;
+            }
+
+            try {
+                await runTransaction(db, async (transaction) => {
+                    const inventoryRef = doc(db, INVENTORY_DOC_PATH);
+                    const inventorySnap = await transaction.get(inventoryRef);
+                    const invData = inventorySnap.exists() ? inventorySnap.data() : {};
+                    
+                    const newSewnDesigns = { ...(invData.coverDesigns || {}), [designName]: initialStock };
+                    const newCutDesigns = { ...(invData.cutCoversByDesign || {}), [designName]: invData.cutCoversByDesign?.[designName] || 0 };
+                    const newFinishedDesigns = { ...(invData.finishedProductsByDesign || {}), [designName]: invData.finishedProductsByDesign?.[designName] || 0 };
+
+                    transaction.set(inventoryRef, { 
+                        ...invData, 
+                        coverDesigns: newSewnDesigns,
+                        cutCoversByDesign: newCutDesigns,
+                        finishedProductsByDesign: newFinishedDesigns
+                    }, { merge: true });
+                });
+                statusEl.textContent = `🎉 Design '${designName}' added successfully!`;
+                statusEl.className = "text-sm text-green-600 block";
+                form.reset();
+            } catch (error) {
+                console.error("Error adding new design:", error);
+                statusEl.textContent = `Failed to add design: ${error.message}`;
+                statusEl.className = "text-sm text-red-600 block";
+            }
+        };
+
+        const handleUpdateDesignName = async (event) => {
+            event.preventDefault();
+            const oldName = document.getElementById('old-design-name').value;
+            const newName = document.getElementById('new-design-name').value.trim().replace(/[^a-zA-Z0-9\s]/g, "");
+            
+            if (!newName || newName === oldName) {
+                document.getElementById('edit-design-modal').classList.add('hidden');
+                return;
+            }
+
+            try {
+                await runTransaction(db, async (transaction) => {
+                    const inventoryRef = doc(db, INVENTORY_DOC_PATH);
+                    const inventorySnap = await transaction.get(inventoryRef);
+                    if (!inventorySnap.exists()) { throw new Error("Inventory document not found!"); }
+                    
+                    const invData = inventorySnap.data();
+                    const newCoverDesigns = { ...(invData.coverDesigns || {}) };
+                    const newCutDesigns = { ...(invData.cutCoversByDesign || {}) };
+                    const newFinishedDesigns = { ...(invData.finishedProductsByDesign || {}) };
+
+
+                    if (newCoverDesigns.hasOwnProperty(oldName)) {
+                        newCoverDesigns[newName] = newCoverDesigns[oldName];
+                        delete newCoverDesigns[oldName];
+                    }
+                    if (newCutDesigns.hasOwnProperty(oldName)) {
+                        newCutDesigns[newName] = newCutDesigns[oldName];
+                        delete newCutDesigns[oldName];
+                    }
+                    if (newFinishedDesigns.hasOwnProperty(oldName)) {
+                        newFinishedDesigns[newName] = newFinishedDesigns[oldName];
+                        delete newFinishedDesigns[oldName];
+                    }
+                    
+                    transaction.set(inventoryRef, { ...invData, coverDesigns: newCoverDesigns, cutCoversByDesign: newCutDesigns, finishedProductsByDesign: newFinishedDesigns });
+                });
+                document.getElementById('edit-design-modal').classList.add('hidden');
+            } catch (error) {
+                console.error("Error updating design name:", error);
+                showAlertModal('Update Failed', `Could not update design name: ${error.message}`);
+            }
+        };
+
+        const handleDeleteDesign = (designName) => {
+            showConfirmationModal(
+                '🗑️ Delete Design',
+                `Are you sure you want to delete the design "${designName}"? This will remove it from all stock lists. This cannot be undone.`,
+                async () => {
+                    try {
+                        await runTransaction(db, async (transaction) => {
+                            const inventoryRef = doc(db, INVENTORY_DOC_PATH);
+                            const inventorySnap = await transaction.get(inventoryRef);
+                             if (!inventorySnap.exists()) { throw new Error("Inventory document not found!"); }
+
+                            const invData = inventorySnap.data();
+                            const newCoverDesigns = { ...(invData.coverDesigns || {}) };
+                            const newCutDesigns = { ...(invData.cutCoversByDesign || {}) };
+                            const newFinishedDesigns = { ...(invData.finishedProductsByDesign || {}) };
+
+                            delete newCoverDesigns[designName];
+                            delete newCutDesigns[designName];
+                            delete newFinishedDesigns[designName];
+
+                            const newTotalSewn = Object.values(newCoverDesigns).reduce((a, b) => a + b, 0);
+                            const newTotalCut = Object.values(newCutDesigns).reduce((a, b) => a + b, 0);
+                            const newTotalFinished = Object.values(newFinishedDesigns).reduce((a, b) => a + b, 0);
+
+                            transaction.set(inventoryRef, { 
+                                ...invData, 
+                                coverDesigns: newCoverDesigns, 
+                                cutCoversByDesign: newCutDesigns,
+                                finishedProductsByDesign: newFinishedDesigns,
+                                stockTailoredCovers: newTotalSewn,
+                                stockCoverCut: newTotalCut,
+                                stockFinishedProducts: newTotalFinished
+                            });
+                        });
+                    } catch (error) {
+                        console.error("Error deleting design:", error);
+                        showAlertModal('Delete Failed', `Could not delete design: ${error.message}`);
+                    }
+                }
+            );
+        };
+        
+        const openEditDesignModal = (oldName) => {
+            document.getElementById('edit-design-modal').classList.remove('hidden');
+            document.getElementById('old-design-name').value = oldName;
+            document.getElementById('new-design-name').value = oldName;
+            document.getElementById('edit-design-modal-title').textContent = `Edit "${oldName}"`;
+        };
+        
+        const openAdjustmentModal = (recipient) => {
+            const modal = document.getElementById('adjustment-modal');
+            modal.classList.remove('hidden');
+            document.getElementById('adjustment-modal-title').textContent = `Adjust Balance for ${recipient}`;
+            document.getElementById('adjustmentRecipient').value = recipient;
+            
+            let outstanding = 0;
+            if (recipient === "Tailor") outstanding = tailorOutstandingBalance;
+            else if (recipient === "Cutter 1") outstanding = cutter1OutstandingBalance;
+            else if (recipient === "Cutter 2") outstanding = cutter2OutstandingBalance;
+
+            document.getElementById('adjustmentAmount').value = Math.max(0, outstanding).toFixed(2);
+        };
+
+
+        const handleSaveCosts = async (event) => {
+            event.preventDefault();
+            const form = event.target;
+            const statusEl = document.getElementById('costing-status-message');
+            
+            const newOwners = [];
+            const ownerNameInputs = document.querySelectorAll('#owner-shares-settings input[name="ownerName"]');
+            const ownerShareInputs = document.querySelectorAll('#owner-shares-settings input[name="ownerShare"]');
+            let totalShare = 0;
+            
+            for(let i=0; i < ownerNameInputs.length; i++){
+                const name = ownerNameInputs[i].value.trim();
+                const share = parseFloat(ownerShareInputs[i].value) / 100;
+                if(name && !isNaN(share) && share > 0){
+                    newOwners.push({ name, share });
+                    totalShare += share;
+                }
+            }
+
+            if(Math.abs(totalShare - 1.0) > 0.001){
+                statusEl.textContent = `⚠️ Owner shares must add up to 100%. Current total is ${(totalShare * 100).toFixed(1)}%.`;
+                statusEl.className = "text-sm text-red-600 block";
+                return;
+            }
+
+            const newCosts = {
+                sellingPrice: parseFloat(form.costSellingPrice.value),
+                materialCost: parseFloat(form.costMaterialCost.value),
+                tailorRate: parseFloat(form.costTailorRate.value),
+                cutter1Rate: parseFloat(form.costCutter1Rate.value),
+                cutter2Rate: parseFloat(form.costCutter2Rate.value),
+                owners: newOwners
+            };
+
+            if (Object.values(newCosts).some(v => typeof v === 'number' && (isNaN(v) || v < 0))) {
+                statusEl.textContent = "⚠️ Please enter valid, non-negative numbers for all costs.";
+                statusEl.className = "text-sm text-red-600 block";
+                return;
+            }
+
+            try {
+                statusEl.textContent = "Saving...";
+                statusEl.className = "text-sm text-gray-500 block";
+                await setDoc(doc(db, COSTS_DOC_PATH), newCosts, { merge: true });
+                statusEl.textContent = "✅ Cost settings saved successfully!";
+                statusEl.className = "text-sm text-green-600 block";
+                setTimeout(() => statusEl.textContent = "", 3000);
+            } catch (error) {
+                console.error("Error saving costs:", error);
+                statusEl.textContent = `❌ Failed to save settings: ${error.message}`;
+                statusEl.className = "text-sm text-red-600 block";
+            }
+        };
+
+        const handleSaveAnalyticsShares = async (event) => {
+            event.preventDefault();
+            const statusEl = document.getElementById('analytics-shares-status');
+            statusEl.textContent = "";
+
+            const newOwners = [];
+            const ownerNameInputs = document.querySelectorAll('#analytics-shares-form input[name="analyticsOwnerName"]');
+            const ownerShareInputs = document.querySelectorAll('#analytics-shares-form input[name="analyticsOwnerShare"]');
+            let totalShare = 0;
+
+            for(let i=0; i < ownerNameInputs.length; i++){
+                const name = ownerNameInputs[i].value.trim();
+                const share = parseFloat(ownerShareInputs[i].value) / 100;
+                if(name && !isNaN(share) && share >= 0){
+                    newOwners.push({ name, share });
+                    totalShare += share;
+                }
+            }
+
+            if(Math.abs(totalShare - 1.0) > 0.001){
+                statusEl.textContent = `⚠️ Owner shares must add up to 100%. Current total is ${(totalShare * 100).toFixed(1)}%.`;
+                statusEl.className = "text-sm text-red-600 block text-center";
+                return;
+            }
+
+            const costsToUpdate = { owners: newOwners };
+
+            try {
+                statusEl.textContent = "Saving...";
+                statusEl.className = "text-sm text-gray-500 block text-center";
+                await setDoc(doc(db, COSTS_DOC_PATH), costsToUpdate, { merge: true });
+                statusEl.textContent = "✅ Share settings saved successfully!";
+                statusEl.className = "text-sm text-green-600 block text-center";
+                setTimeout(() => statusEl.textContent = "", 3000);
+            } catch (error) {
+                console.error("Error saving shares from analytics:", error);
+                statusEl.textContent = `❌ Failed to save settings: ${error.message}`;
+                statusEl.className = "text-sm text-red-600 block text-center";
+            }
+        };
+
+
+        const updateCoverDesignStock = async (designName, newStock, type) => {
+            const statusEl = document.getElementById("design-status-message");
+            const stock = parseInt(newStock);
+            if (isNaN(stock) || stock < 0) {
+                statusEl.textContent = "⚠️ Invalid quantity.";
+                statusEl.className = "text-sm text-red-600 block";
+                return;
+            }
+
+            let fieldToUpdate = '';
+            let totalFieldToUpdate = '';
+            let typeName = '';
+
+            if (type === 'sewn') {
+                fieldToUpdate = 'coverDesigns';
+                totalFieldToUpdate = 'stockTailoredCovers';
+                typeName = 'Sewn';
+            } else if (type === 'cut') {
+                fieldToUpdate = 'cutCoversByDesign';
+                totalFieldToUpdate = 'stockCoverCut';
+                typeName = 'Cut';
+            } else if (type === 'finished') {
+                fieldToUpdate = 'finishedProductsByDesign';
+                totalFieldToUpdate = 'stockFinishedProducts';
+                typeName = 'Finished';
+            } else {
+                console.error("Invalid stock type for update:", type);
+                return;
+            }
+
+            try {
+                await runTransaction(db, async (transaction) => {
+                    const inventoryRef = doc(db, INVENTORY_DOC_PATH);
+                    const inventorySnap = await transaction.get(inventoryRef);
+                    const invData = inventorySnap.exists() ? inventorySnap.data() : {};
+                    const newDesigns = { ...(invData[fieldToUpdate] || {}), [designName]: stock };
+                    const updatedData = { ...invData, [fieldToUpdate]: newDesigns };
+
+                    // Recalculate total for the specific field
+                    updatedData[totalFieldToUpdate] = Object.values(newDesigns).reduce((a, b) => a + b, 0);
+                    
+                    transaction.set(inventoryRef, updatedData);
+                });
+                statusEl.textContent = `✨ ${typeName} stock for '${designName}' updated!`;
+                statusEl.className = "text-sm text-green-600 block";
+            } catch (error) {
+                console.error(`Error updating ${type} design stock:`, error);
+                statusEl.textContent = `Failed to update: ${error.message}`;
+                statusEl.className = "text-sm text-red-600 block";
+            }
+        };
+        
+        const updateSimpleStock = async (fieldName, newValue) => {
+            const statusEl = document.getElementById('manual-stock-status');
+            const value = parseInt(newValue);
+            if (isNaN(value) || value < 0) {
+                statusEl.textContent = 'Invalid stock value.';
+                statusEl.className = 'text-xs text-red-600 text-center pt-1';
+                return;
+            }
+
+            try {
+                statusEl.textContent = 'Updating...';
+                statusEl.className = 'text-xs text-gray-500 text-center pt-1';
+                await setDoc(doc(db, INVENTORY_DOC_PATH), { [fieldName]: value }, { merge: true });
+                statusEl.textContent = 'Stock updated!';
+                statusEl.className = 'text-xs text-green-600 text-center pt-1';
+            } catch (error) {
+                console.error('Error updating simple stock:', error);
+                statusEl.textContent = 'Update failed.';
+                statusEl.className = 'text-xs text-red-600 text-center pt-1';
+            }
+        };
+
+
+        const handleRecipientChange = () => {
+            // Autofill payment amount based on outstanding balance
+            if (document.getElementById("paymentId").value) return; // Don't autofill if editing
+            const recipient = document.getElementById("paymentRecipient").value;
+            const amountInput = document.getElementById("paymentAmount");
+            let outstanding = 0;
+            if (recipient === "Tailor") outstanding = tailorOutstandingBalance;
+            else if (recipient === "Cutter 1") outstanding = cutter1OutstandingBalance;
+            else if (recipient === "Cutter 2") outstanding = cutter2OutstandingBalance;
+            else if (recipient === "General") outstanding = tailorOutstandingBalance + cutter1OutstandingBalance + cutter2OutstandingBalance;
+            amountInput.value = Math.max(0, outstanding).toFixed(2);
+        };
+
+        // --- EDITING & FORM RESET FUNCTIONS ---
+        const loadRecordForEdit = (record) => {
+            switchTab("productivity");
+            document.getElementById("date").value = record.date;
+            document.getElementById("foamCuts").value = record.foamCuts || 0;
+            
+            document.querySelectorAll('#tailor-design-inputs input[type="number"]').forEach(input => {
+                input.value = record.sewnCoversByDesign?.[input.dataset.designName] || 0;
+            });
+            document.getElementById('tailor-design-inputs').dispatchEvent(new Event('input'));
+            
+            document.querySelectorAll('#processor-design-inputs input[type="number"]').forEach(input => {
+                input.value = record.cutCoversByDesign?.[input.dataset.designName] || 0;
+            });
+            document.getElementById('processor-design-inputs').dispatchEvent(new Event('input'));
+
+            document.querySelectorAll('#assembled-design-inputs input[type="number"]').forEach(input => {
+                input.value = record.assembledMattressesByDesign?.[input.dataset.designName] || 0;
+            });
+            document.getElementById('assembled-design-inputs').dispatchEvent(new Event('input'));
+
+            document.querySelectorAll('#sold-design-inputs input[type="number"]').forEach(input => {
+                input.value = record.soldMattressesByDesign?.[input.dataset.designName] || 0;
+            });
+            document.getElementById('sold-design-inputs').dispatchEvent(new Event('input'));
+
+
+            const statusEl = document.getElementById("status-message-daily");
+            statusEl.textContent = `✏️ Loaded record for ${record.date}. Edit and submit to update.`;
+            statusEl.className = "text-sm font-bold pink-text";
+            document.getElementById("daily-entry-form").scrollIntoView({ behavior: "smooth" });
+        };
+        
+        const loadPaymentForEdit = (payment) => {
+            switchTab("salary");
+            document.getElementById("paymentId").value = payment.id;
+            document.getElementById("paymentAmount").value = payment.amount;
+            document.getElementById("paymentRecipient").value = payment.recipient;
+            document.getElementById("paymentNotes").value = payment.notes;
+            document.getElementById("payment-submit-btn").textContent = "Update Payment";
+            document.getElementById("cancel-payment-edit").classList.remove("hidden");
+            
+            const statusEl = document.getElementById("status-payment");
+            statusEl.textContent = "✏️ Editing payment. Click 'Update' to save.";
+            statusEl.className = "text-sm font-bold pink-text";
+        };
+
+        const loadOrderForEdit = (order) => {
+            switchTab("orders");
+            document.getElementById("orderId").value = order.id;
+            document.getElementById("clientName").value = order.clientName;
+            document.getElementById("orderQuantity").value = order.quantity;
+            document.getElementById("orderDueDate").value = order.dueDate;
+            document.getElementById("order-submit-btn").textContent = "Update Order";
+            document.getElementById("cancel-order-edit").classList.remove("hidden");
+            
+            const statusEl = document.getElementById("status-message-order");
+            statusEl.textContent = "✏️ Editing order. Click 'Update' to save.";
+            statusEl.className = "text-sm font-bold pink-text";
+        };
+
+        const resetPaymentForm = () => {
+            document.getElementById("payment-form").reset();
+            document.getElementById("paymentId").value = "";
+            document.getElementById("payment-submit-btn").textContent = "Log Payment";
+            document.getElementById("cancel-payment-edit").classList.add("hidden");
+            document.getElementById("status-payment").textContent = "";
+        };
+
+        const resetOrderForm = () => {
+            document.getElementById("order-form").reset();
+            document.getElementById("orderId").value = "";
+            document.getElementById("order-submit-btn").textContent = "Log Order";
+            document.getElementById("cancel-order-edit").classList.add("hidden");
+            document.getElementById("status-message-order").textContent = "";
+            document.getElementById("orderDueDate").value = getTodayDate();
+        };
+        
+        const toggleCoverManager = () => {
+            document.getElementById("cover-manager").classList.toggle("hidden");
+        };
+
+        // --- Start the app ---
+        window.onload = initFirebase;
+    </script>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+
+    <!-- FLUFFY CHICK SVG DEFINITION -->
+    <svg class="absolute w-0 h-0">
+        <defs>
+            <g id="fluffy-chick">
+                <!-- Body -->
+                <path d="M 50 90 C 20 95, 10 70, 20 50 C 30 20, 70 20, 80 50 C 90 70, 80 95, 50 90 Z" fill="#FFD54F" stroke="#FBBF24" stroke-width="3" />
+                <!-- Eyes -->
+                <circle cx="37" cy="55" r="9" fill="#2d2d2d" />
+                <circle cx="63" cy="55" r="9" fill="#2d2d2d" />
+                <circle cx="39" cy="52" r="3" fill="white" />
+                <circle cx="65" cy="52" r="3" fill="white" />
+                <!-- Cheeks -->
+                <circle cx="25" cy="65" r="5" fill="#FBCFE8" opacity="0.8"/>
+                <circle cx="75" cy="65" r="5" fill="#FBCFE8" opacity="0.8"/>
+                <!-- Beak -->
+                <polygon points="47,65 53,65 50,70" fill="#F97316"/>
+                <!-- Flowers -->
+                <g transform="translate(70, 30) rotate(15)">
+                    <circle cx="0" cy="0" r="7" fill="#F9A8D4"/>
+                    <circle cx="0" cy="0" r="3" fill="#FFFBEB"/>
+                </g>
+                 <g transform="translate(62, 22) rotate(-25)">
+                    <circle cx="0" cy="0" r="6" fill="#FBCFE8"/>
+                    <circle cx="0" cy="0" r="2.5" fill="#FFFBEB"/>
+                </g>
+            </g>
+        </defs>
+    </svg>
+
+    <!-- Initial Loading Screen -->
+    <div id="initial-loader" class="fixed inset-0 bg-yellow-50 flex flex-col items-center justify-center z-50">
+        <svg class="w-32 h-32 fluffy-chick-animation"><use href="#fluffy-chick"></use></svg>
+        <p class="text-2xl yellow-text font-semibold mt-4 animate-pulse">Loading Sweechip...</p>
+    </div>
+    
+    <!-- Confirmation Modal -->
+    <div id="confirmation-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50">
+        <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full">
+            <h3 id="modal-title" class="text-xl font-bold mb-3 pink-text">Confirmation</h3>
+            <p id="modal-message" class="mb-4 text-gray-700">Are you sure?</p>
+            <div class="flex justify-end space-x-3">
+                <button id="modal-cancel-btn" class="btn-cancel px-4 py-2 rounded-lg">Cancel</button>
+                <button id="modal-confirm-btn" class="btn-primary px-4 py-2 rounded-lg">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alert Modal -->
+    <div id="alert-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50">
+        <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full">
+            <h3 id="alert-modal-title" class="text-xl font-bold mb-3 pink-text">Error</h3>
+            <p id="alert-modal-message" class="mb-4 text-gray-700"></p>
+            <div class="flex justify-end space-x-3">
+                <button id="alert-modal-ok-btn" class="btn-primary px-4 py-2 rounded-lg">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Design Name Modal -->
+    <div id="edit-design-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50">
+        <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full">
+            <h3 id="edit-design-modal-title" class="text-xl font-bold mb-3 pink-text">Edit Design Name</h3>
+            <form id="edit-design-form">
+                <input type="hidden" id="old-design-name">
+                <div>
+                    <label for="new-design-name" class="block text-sm font-medium brown-text">New Design Name</label>
+                    <input type="text" id="new-design-name" required class="mt-1 block w-full rounded-lg input-style">
+                </div>
+                <div class="flex justify-end space-x-3 mt-4">
+                    <button type="button" id="modal-cancel-edit-design-btn" class="btn-cancel px-4 py-2 rounded-lg">Cancel</button>
+                    <button type="submit" id="modal-save-design-btn" class="btn-primary px-4 py-2 rounded-lg">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Adjustment Modal -->
+    <div id="adjustment-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50">
+        <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full">
+            <h3 id="adjustment-modal-title" class="text-xl font-bold mb-3 pink-text">Adjust Balance</h3>
+            <form id="adjustment-form">
+                <input type="hidden" id="adjustmentRecipient">
+                <div>
+                    <label for="adjustmentAmount" class="block text-sm font-medium brown-text">Amount to Adjust</label>
+                    <input type="number" id="adjustmentAmount" min="0.01" step="0.01" required class="mt-1 block w-full rounded-lg input-style">
+                </div>
+                <div class="mt-4">
+                    <label for="adjustmentNotes" class="block text-sm font-medium brown-text">Notes / Reason</label>
+                    <input type="text" id="adjustmentNotes" required class="mt-1 block w-full rounded-lg input-style" placeholder="e.g., Owner contribution">
+                </div>
+                <div class="flex justify-end space-x-3 mt-4">
+                    <button type="button" id="modal-cancel-adjustment-btn" class="btn-cancel px-4 py-2 rounded-lg">Cancel</button>
+                    <button type="submit" class="btn-primary px-4 py-2 rounded-lg">Save Adjustment</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
+    <!-- MAIN TRACKER CONTAINER -->
+    <div id="tracker-container" class="hidden w-full">
+        <header class="text-center mb-6">
+              <div class="flex justify-center items-center">
+                  <svg class="w-20 h-20 fluffy-chick-animation mr-2"><use href="#fluffy-chick"></use></svg>
+                  <h1 class="text-4xl md:text-6xl font-extrabold yellow-text">Sweechip</h1>
+              </div>
+            <p class="text-gray-600 italic mt-1 text-sm">Sweetness in every stitch, 'chip' on the price—never on quality.</p>
+            <p class="text-xl text-gray-500 mt-2">Business Production, Salary, & Profit Tracker</p>
+            <p id="user-info" class="text-xs text-gray-400 mt-2"></p>
+        </header>
+
+        <!-- Tab Navigation -->
+        <nav class="flex flex-wrap justify-center mb-6">
+            <button data-tab="dashboard" class="tab-button">⭐ Dashboard</button>
+            <button data-tab="productivity" class="tab-button">🥚 Productivity</button>
+            <button data-tab="orders" class="tab-button">💖 Orders</button>
+            <button data-tab="salary" class="tab-button">💰 Salary</button>
+            <button data-tab="inventory" class="tab-button">📦 Inventory</button>
+            <button data-tab="defects" class="tab-button">🛠️ Defects</button>
+            <button data-tab="expenses" class="tab-button">💸 Expenses</button>
+            <button data-tab="analytics" class="tab-button">📊 Analytics</button>
+            <button data-tab="suppliers" class="tab-button">📞 Suppliers</button>
+            <button data-tab="history" class="tab-button">📝 History</button>
+            <button data-tab="costing" class="tab-button">⚙️ Costing</button>
+        </nav>
+        
+        <main class="max-w-7xl mx-auto">
+            <!-- Dashboard Tab -->
+            <div id="tab-content-dashboard" class="tab-content">
+                <div class="max-w-4xl mx-auto">
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <!-- Net Profit -->
+                        <div class="cute-card bg-green-100 border-green-300 p-6 text-center">
+                             <h3 class="text-lg font-bold text-green-800">Net Profit</h3>
+                             <p id="dashboard-net-profit" class="text-4xl font-extrabold text-green-600 mt-2">P0.00</p>
+                        </div>
+                        <!-- Pending Payout -->
+                        <div class="cute-card bg-red-100 border-red-300 p-6 text-center">
+                            <h3 class="text-lg font-bold text-red-800">Pending Payout</h3>
+                            <p id="dashboard-pending-payout" class="text-4xl font-extrabold text-red-600 mt-2">P0.00</p>
+                        </div>
+                        <!-- Pending Orders -->
+                        <div class="cute-card bg-yellow-100 border-yellow-300 p-6 text-center">
+                            <h3 class="text-lg font-bold text-yellow-800">Pending Order Units</h3>
+                            <p id="dashboard-pending-orders" class="text-4xl font-extrabold text-yellow-600 mt-2">0</p>
+                        </div>
+                        <!-- Inventory -->
+                         <div class="cute-card bg-blue-100 border-blue-300 p-6 md:col-span-2 lg:grid-cols-3">
+                             <h3 class="text-xl font-bold text-blue-800 mb-4 text-center">Inventory At-a-Glance</h3>
+                             <div class="grid grid-cols-2 gap-4">
+                                 <div class="text-center bg-white/50 p-4 rounded-lg">
+                                     <p class="text-lg font-semibold text-blue-700">Finished Products</p>
+                                     <p id="dashboard-finished-stock" class="text-3xl font-extrabold text-blue-600">0</p>
+                                 </div>
+                                 <div class="text-center bg-white/50 p-4 rounded-lg">
+                                     <p class="text-lg font-semibold text-blue-700">Sewn Covers (Ready)</p>
+                                     <p id="dashboard-sewn-stock" class="text-3xl font-extrabold text-blue-600">0</p>
+                                 </div>
+                             </div>
+                        </div>
+                         <!-- Low Stock Alerts -->
+                        <div id="dashboard-low-stock-alerts" class="cute-card bg-orange-100 border-orange-300 p-6 md:col-span-2 lg:grid-cols-3">
+                            <h3 class="text-xl font-bold text-orange-800 mb-4 text-center">🚨 Low Stock Alerts</h3>
+                            <div id="low-stock-list" class="space-y-2">
+                                <p class="text-center text-gray-500 italic">No low stock items. Great job!</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Productivity Tab -->
+            <div id="tab-content-productivity" class="tab-content">
+                <div class="max-w-xl mx-auto">
+                    <div class="cute-card bg-white p-6 rounded-xl shadow-lg border-pink-accent">
+                        <h2 class="text-2xl font-bold pink-text card-header flex items-center"><span class="text-2xl mr-2">🥚</span> Daily Production & Sales</h2>
+                        <form id="daily-entry-form" class="space-y-4">
+                            <div>
+                                <label for="date" class="block text-sm font-medium brown-text">Date</label>
+                                <input type="date" id="date" name="date" required class="mt-1 block w-full rounded-lg input-style">
+                            </div>
+                            <div class="pt-2 border-t border-pink-accent/30">
+                                <p class="text-sm font-bold brown-text mb-1">Employee Output</p>
+                                <label class="block text-sm font-medium brown-text">Cutter 1: Cover Cuts by Design (@ P<span class="cutter1-rate-display">8</span>) <span class="font-extrabold float-right">Total: <span id="coverCuts-total-display">0</span></span></label>
+                                <div id="processor-design-inputs" class="space-y-2 mt-1 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                                    <p class="text-sm text-center italic text-gray-500">Loading designs...</p>
+                                </div>
+                                <input type="hidden" id="coverCuts" name="coverCuts" value="0">
+
+                                <label for="foamCuts" class="block text-sm font-medium brown-text mt-3">Cutter 2: Foam Cuts (@ P<span class="cutter2-rate-display">8</span>)</label>
+                                <input type="number" id="foamCuts" name="foamCuts" min="0" value="0" class="mt-1 block w-full rounded-lg input-style" placeholder="0">
+                                
+                                <label class="block text-sm font-bold brown-text mt-3">Tailor: Covers Sewn by Design (@ P<span class="tailor-rate-display">17</span>) <span class="font-extrabold float-right">Total: <span id="tailoredCovers-total-display">0</span></span></label>
+                                <div id="tailor-design-inputs" class="space-y-2 mt-1 p-3 bg-pink-50 border border-pink-200 rounded-lg">
+                                    <p class="text-sm text-center italic text-gray-500">Loading designs...</p>
+                                </div>
+                                <input type="hidden" id="tailoredCovers" name="tailoredCovers" value="0">
+                            </div>
+                            <div class="pt-2 border-t border-pink-accent/30">
+                                <p class="text-sm font-bold brown-text mb-1">Final Product Tracking</p>
+                                <label class="block text-sm font-bold brown-text">Mattresses Assembled by Design <span class="font-extrabold float-right">Total: <span id="completedMattresses-total-display">0</span></span></label>
+                                <div id="assembled-design-inputs" class="space-y-2 mt-1 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                                    <p class="text-sm text-center italic text-gray-500">Loading designs...</p>
+                                </div>
+                                <input type="hidden" id="completedMattresses" name="completedMattresses" value="0">
+                                
+                                <label class="block text-sm font-bold brown-text mt-3">Products Sold by Design (@ P<span class="selling-price-display">220</span>) <span class="font-extrabold float-right">Total: <span id="productsSold-total-display">0</span></span></label>
+                                <div id="sold-design-inputs" class="space-y-2 mt-1 p-3 bg-green-50 border border-green-200 rounded-lg">
+                                    <p class="text-sm text-center italic text-gray-500">Loading designs...</p>
+                                </div>
+                                <input type="hidden" id="productsSold" name="productsSold" value="0">
+                            </div>
+                            <p id="status-message-daily" class="text-sm font-medium pt-2"></p>
+                            <button type="submit" class="w-full btn-primary py-3 rounded-lg font-semibold text-lg shadow-md">Log Daily Chirps</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <!-- Orders Tab -->
+            <div id="tab-content-orders" class="tab-content">
+                 <div class="cute-card bg-light-yellow p-6 rounded-xl shadow-lg border-pink-accent">
+                    <h2 class="text-2xl font-bold pink-text card-header flex items-center"><span class="text-2xl mr-2">💖</span> Order Tracker</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="md:col-span-1">
+                            <div class="bg-white p-3 rounded-lg text-center mb-4 border border-red-300">
+                                <p class="text-sm brown-text">Total Pending Units</p>
+                                <p id="total-pending-demand" class="text-3xl font-extrabold text-red-600">0</p>
+                            </div>
+                            <form id="order-form" class="space-y-3">
+                                <h3 class="font-semibold brown-text">Log/Edit Order</h3>
+                                <input type="hidden" id="orderId" name="orderId">
+                                <input type="text" id="clientName" name="clientName" class="mt-1 block w-full rounded-lg input-style" placeholder="Client Name">
+                                <div class="flex space-x-2">
+                                    <input type="number" id="orderQuantity" name="orderQuantity" min="1" required class="flex-1 rounded-lg input-style" placeholder="Qty">
+                                    <input type="date" id="orderDueDate" name="orderDueDate" required class="flex-1 rounded-lg input-style">
+                                </div>
+                                <p id="status-message-order" class="text-sm font-medium pt-2"></p>
+                                <div class="flex flex-col space-y-2">
+                                    <button type="submit" id="order-submit-btn" class="w-full btn-primary py-3 rounded-lg font-semibold shadow-md">Log Order</button>
+                                    <button type="button" id="cancel-order-edit" class="w-full btn-cancel py-2 rounded-lg font-semibold hidden">Cancel Edit</button>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="md:col-span-2">
+                            <h3 class="text-xl font-bold mb-3 brown-text">Order List</h3>
+                            <div class="overflow-x-auto bg-white/50 rounded-lg">
+                                <table class="min-w-full divide-y divide-yellow-300">
+                                    <thead class="brown-text">
+                                        <tr>
+                                            <th class="p-2 text-left text-sm font-semibold uppercase">Client</th><th class="p-2 text-center text-sm font-semibold uppercase">Qty</th>
+                                            <th class="p-2 text-center text-sm font-semibold uppercase">Due</th><th class="p-2 text-center text-sm font-semibold uppercase">Status</th>
+                                            <th class="p-2 text-center text-sm font-semibold uppercase">Action</th><th class="p-2 text-center text-sm font-semibold uppercase">Edit</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="orders-body" class="divide-y divide-yellow-200"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Salary Tab -->
+            <div id="tab-content-salary" class="tab-content">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="cute-card bg-white p-6 rounded-xl shadow-lg border-yellow-primary">
+                        <h2 class="text-2xl font-bold yellow-text card-header flex items-center"><span class="text-2xl mr-2">💰</span> Salary Status</h2>
+                        <div class="bg-pink-100 p-4 rounded-xl shadow-md mb-4 border border-pink-text">
+                            <p class="font-bold text-lg pink-text">Tailor Status (P<span class="tailor-rate-display">17</span>/cover)</p>
+                            <div class="flex justify-between text-sm mt-1"><span>Liability Incurred:</span><span id="tailor-incurred" class="font-medium text-red-600">P0.00</span></div>
+                            <div class="flex justify-between text-sm"><span>Total Paid Out:</span><span id="tailor-paid" class="font-medium text-green-600">P0.00</span></div>
+                            <div class="flex justify-between text-sm"><span>Adjustments:</span><span id="tailor-adjusted" class="font-medium text-blue-600">P0.00</span></div>
+                            <div class="flex justify-between font-extrabold mt-2 border-t border-pink-300 pt-2">
+                                <span>PENDING PAYOUT:</span>
+                                <div class="flex items-center gap-2">
+                                    <span id="tailor-outstanding" class="text-lg text-red-700">P0.00</span>
+                                    <button data-recipient="Tailor" class="adjust-balance-btn text-xs bg-blue-200 text-blue-800 px-2 py-0.5 rounded-full hover:bg-blue-300">Adjust</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-yellow-100 p-4 rounded-xl shadow-md mb-4 border border-yellow-text">
+                            <p class="font-bold text-lg yellow-text">Cutter 1 (Cover) Status (P<span class="cutter1-rate-display">8</span>/cut)</p>
+                            <div class="flex justify-between text-sm mt-1"><span>Liability Incurred:</span><span id="cutter1-incurred" class="font-medium text-red-600">P0.00</span></div>
+                            <div class="flex justify-between text-sm"><span>Total Paid Out:</span><span id="cutter1-paid" class="font-medium text-green-600">P0.00</span></div>
+                            <div class="flex justify-between text-sm"><span>Adjustments:</span><span id="cutter1-adjusted" class="font-medium text-blue-600">P0.00</span></div>
+                             <div class="flex justify-between font-extrabold mt-2 border-t border-yellow-300 pt-2">
+                                <span>PENDING PAYOUT:</span>
+                                <div class="flex items-center gap-2">
+                                    <span id="cutter1-outstanding" class="text-lg text-red-700">P0.00</span>
+                                    <button data-recipient="Cutter 1" class="adjust-balance-btn text-xs bg-blue-200 text-blue-800 px-2 py-0.5 rounded-full hover:bg-blue-300">Adjust</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-yellow-100 p-4 rounded-xl shadow-md mb-6 border border-yellow-text">
+                            <p class="font-bold text-lg yellow-text">Cutter 2 (Foam) Status (P<span class="cutter2-rate-display">8</span>/cut)</p>
+                            <div class="flex justify-between text-sm mt-1"><span>Liability Incurred:</span><span id="cutter2-incurred" class="font-medium text-red-600">P0.00</span></div>
+                            <div class="flex justify-between text-sm"><span>Total Paid Out:</span><span id="cutter2-paid" class="font-medium text-green-600">P0.00</span></div>
+                            <div class="flex justify-between text-sm"><span>Adjustments:</span><span id="cutter2-adjusted" class="font-medium text-blue-600">P0.00</span></div>
+                             <div class="flex justify-between font-extrabold mt-2 border-t border-yellow-300 pt-2">
+                                <span>PENDING PAYOUT:</span>
+                                 <div class="flex items-center gap-2">
+                                    <span id="cutter2-outstanding" class="text-lg text-red-700">P0.00</span>
+                                    <button data-recipient="Cutter 2" class="adjust-balance-btn text-xs bg-blue-200 text-blue-800 px-2 py-0.5 rounded-full hover:bg-blue-300">Adjust</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-yellow-300 p-5 rounded-lg shadow-inner text-center">
+                            <p class="text-lg font-semibold brown-text">Total Company Liability</p>
+                            <p id="labor-outstanding" class="text-4xl font-extrabold text-red-500">P0.00</p>
+                        </div>
+                    </div>
+                    <div class="cute-card bg-white p-6 rounded-xl shadow-lg border-pink-accent">
+                        <h3 class="text-xl font-bold mb-3 pink-text card-header">Log Salary Payment</h3>
+                        <form id="payment-form" class="space-y-3">
+                            <input type="hidden" id="paymentId" name="paymentId">
+                            <label for="paymentRecipient" class="block text-sm font-medium brown-text">Recipient</label>
+                            <select id="paymentRecipient" name="paymentRecipient" required class="mt-1 block w-full rounded-lg input-style">
+                                <option value="">-- Select --</option>
+                                <option value="General">General (Split)</option>
+                                <option value="Tailor">Tailor</option>
+                                <option value="Cutter 1">Cutter 1 (Cover)</option>
+                                <option value="Cutter 2">Cutter 2 (Foam)</option>
+                            </select>
+                            <label for="paymentAmount" class="block text-sm font-medium brown-text">Amount Paid</label>
+                            <input type="number" id="paymentAmount" name="paymentAmount" min="0.01" step="0.01" required class="mt-1 block w-full rounded-lg input-style" placeholder="e.g., 5000">
+                            <label for="paymentNotes" class="block text-sm font-medium brown-text">Notes</label>
+                            <input type="text" id="paymentNotes" name="paymentNotes" class="mt-1 block w-full rounded-lg input-style" placeholder="e.g., Weekly Pay">
+                            <p id="status-payment" class="text-sm font-medium pt-2"></p>
+                            <div class="flex flex-col space-y-2 pt-2">
+                                <button type="submit" id="payment-submit-btn" class="w-full btn-secondary py-3 rounded-lg font-semibold text-lg shadow-md">Log Payment</button>
+                                <button type="button" id="cancel-payment-edit" class="w-full btn-cancel py-2 rounded-lg font-semibold hidden">Cancel Edit</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <!-- History Tab -->
+            <div id="tab-content-history" class="tab-content space-y-6">
+                <div class="cute-card bg-white p-6 rounded-xl shadow-lg border-yellow-primary overflow-x-auto">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-2xl font-bold yellow-text flex items-center"><span class="text-2xl mr-2">📝</span> Recent Production History</h2>
+                        <button id="export-production-btn" class="btn-secondary py-1 px-3 text-sm">Export CSV</button>
+                    </div>
+                    <table class="min-w-full divide-y divide-yellow-300">
+                        <thead class="bg-yellow-100 brown-text">
+                            <tr>
+                                <th class="p-2 text-left text-sm font-semibold uppercase">Date</th><th class="p-2 text-center text-sm font-semibold uppercase">Covers Sewn</th>
+                                <th class="p-2 text-center text-sm font-semibold uppercase">Cover Cuts</th><th class="p-2 text-center text-sm font-semibold uppercase">Foam Cuts</th><th class="p-2 text-center text-sm font-semibold uppercase">Assembled</th>
+                                <th class="p-2 text-center text-sm font-semibold uppercase">Sold</th><th class="p-2 text-right text-sm font-semibold uppercase">Revenue</th>
+                                <th class="p-2 text-right text-sm font-semibold uppercase">Labor Incurred</th><th class="p-2 text-center text-sm font-semibold uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="history-body" class="divide-y divide-yellow-200"></tbody>
+                    </table>
+                </div>
+                <div class="cute-card bg-white p-6 rounded-xl shadow-lg border-pink-accent overflow-x-auto">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-xl font-bold pink-text">Recent Payment History</h3>
+                        <button id="export-payments-btn" class="btn-secondary py-1 px-3 text-sm">Export CSV</button>
+                    </div>
+                    <table class="min-w-full divide-y divide-pink-200">
+                        <thead class="bg-pink-100 brown-text">
+                            <tr>
+                                <th class="p-2 text-left text-sm font-semibold uppercase">Date</th><th class="p-2 text-right text-sm font-semibold uppercase">Amount</th>
+                                <th class="p-2 text-left text-sm font-semibold uppercase">Info</th><th class="p-2 text-center text-sm font-semibold uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="payments-body" class="divide-y divide-pink-200"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Inventory Tab -->
+            <div id="tab-content-inventory" class="tab-content">
+                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="cute-card bg-yellow-primary p-6 rounded-xl shadow-lg border-yellow-primary">
+                        <h2 class="text-2xl font-bold brown-text card-header flex items-center"><span class="text-2xl mr-2">📦</span> Inventory</h2>
+                        <div class="space-y-3">
+                            <div class="flex justify-between items-center text-lg bg-white/70 p-3 rounded-lg shadow-sm"><span>Cover Cuts in Stock (Total):</span><span id="stock-cover-cuts">0</span></div>
+                            <div class="flex justify-between items-center text-lg bg-white/70 p-3 rounded-lg shadow-sm"><span>Foam Cuts in Stock:</span><span id="stock-foam-cuts">0</span></div>
+                            <div class="border-t-4 border-double border-yellow-400 mt-4 pt-3"></div>
+                            <div class="flex justify-between items-center text-lg bg-white/70 p-3 rounded-lg shadow-sm"><span>Sewn Covers (Total):</span><span id="stock-tailored-covers">0</span></div>
+                            <div class="flex justify-between items-center text-lg bg-white/70 p-3 rounded-lg shadow-sm"><span>Finished Products Stock (Total):</span><span id="stock-products" class="text-xl">0</span></div>
+                            <div class="pl-4 pr-2 py-2 space-y-1 bg-white/50 rounded-lg">
+                                <h4 class="text-sm font-semibold brown-text">Finished Stock by Design:</h4>
+                                <div id="finished-products-detail" class="space-y-1">
+                                    <p class="text-sm brown-text italic">No finished stock tracked yet.</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-6 pt-4 border-t-2 border-yellow-400">
+                            <h3 class="font-bold brown-text mb-3">Manual Stock Adjustments</h3>
+                            <div class="space-y-3">
+                                <div class="flex items-center space-x-2">
+                                    <label class="flex-1 text-sm">Foam Cuts:</label>
+                                    <input type="number" id="manualFoamStock" class="w-20 text-center rounded-md border-gray-300 shadow-sm">
+                                    <button id="updateFoamBtn" class="text-xs bg-yellow-300 text-brown-text px-3 py-1 rounded-full hover:bg-yellow-400 transition">Set</button>
+                                </div>
+                                <p id="manual-stock-status" class="text-xs text-center pt-1"></p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="cute-card bg-light-yellow p-6 rounded-xl shadow-lg border-pink-accent">
+                        <h3 class="text-2xl font-bold pink-text card-header flex items-center"><span class="text-2xl mr-2">💖</span> Design & Stock Manager</h3>
+                        <div class="pt-3">
+                            <h4 class="text-sm font-semibold brown-text mb-2 flex items-center justify-between">Sewn Cover Stock<button id="cover-manager-toggle" class="text-xs bg-white text-brown-text px-3 py-1 rounded-full border border-yellow-text hover:bg-yellow-100 transition">Manage</button></h4>
+                            <div id="cover-designs-detail" class="space-y-1"></div>
+                        </div>
+                        <div class="pt-3 mt-4 border-t border-pink-200">
+                            <h4 class="text-sm font-semibold brown-text mb-2">Cut Cover Stock (Unsewn)</h4>
+                            <div id="cut-covers-detail" class="space-y-1"></div>
+                        </div>
+                        <div id="cover-manager" class="hidden mt-4">
+                            <div class="p-3 bg-yellow-100 border border-yellow-300 rounded-lg text-center text-sm brown-text mb-4">
+                                <p><strong>Note:</strong> Manually adjusting stock counts here will only update your inventory levels. It does not affect productivity logs or salary calculations.</p>
+                            </div>
+                            <p id="design-status-message" class="text-sm font-medium hidden pt-2 mb-4"></p>
+                            <h4 class="font-semibold brown-text mb-2">Add New Design</h4>
+                            <form id="new-design-form" class="space-y-3 mb-6 border-b border-gray-400 pb-4">
+                                <input type="text" name="designName" required placeholder="e.g., Pink Chicks Design" class="mt-1 block w-full rounded-lg input-style">
+                                <input type="number" name="initialStock" min="0" value="0" required placeholder="Initial Sewn Stock" class="mt-1 block w-full rounded-lg input-style">
+                                <button type="submit" class="w-full btn-primary py-2 rounded-lg font-semibold text-sm">Add Design</button>
+                            </form>
+                            <h4 class="font-semibold brown-text mb-3">Adjust Existing Sewn Stock</h4>
+                            <div id="current-design-list" class="space-y-3 mb-6 border-b border-gray-400 pb-4"></div>
+                            <h4 class="font-semibold brown-text mb-3">Adjust Existing Cut Stock</h4>
+                            <div id="current-cut-design-list" class="space-y-3 mb-6 border-b border-gray-400 pb-4"></div>
+                            <h4 class="font-semibold brown-text mb-3">Adjust Existing Finished Stock</h4>
+                            <div id="current-finished-design-list" class="space-y-3"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Defects Tab -->
+            <div id="tab-content-defects" class="tab-content">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="cute-card bg-white p-6 rounded-xl shadow-lg border-red-300">
+                        <h2 class="text-2xl font-bold text-red-700 card-header flex items-center"><span class="text-2xl mr-2">🛠️</span> Log a Defective Item</h2>
+                        <form id="defect-form" class="space-y-4">
+                            <div>
+                                <label for="defectItemType" class="block text-sm font-medium brown-text">Item Type</label>
+                                <select id="defectItemType" name="defectItemType" required class="mt-1 block w-full rounded-lg input-style">
+                                    <option value="">-- Select Type --</option>
+                                    <option value="Cover">Cover</option>
+                                    <option value="Foam">Foam</option>
+                                    <option value="Finished Product">Finished Product</option>
+                                </select>
+                            </div>
+                             <div>
+                                <label for="defectQuantity" class="block text-sm font-medium brown-text">Quantity</label>
+                                <input type="number" id="defectQuantity" name="defectQuantity" min="1" required class="mt-1 block w-full rounded-lg input-style" placeholder="0">
+                            </div>
+                            <div>
+                                <label for="defectStatus" class="block text-sm font-medium brown-text">Action Needed</label>
+                                <select id="defectStatus" name="defectStatus" required class="mt-1 block w-full rounded-lg input-style">
+                                     <option value="">-- Select Action --</option>
+                                    <option value="Needs Repair">Needs Repair</option>
+                                    <option value="Needs Cleaning">Needs Cleaning</option>
+                                    <option value="To Be Disposed">To Be Disposed</option>
+                                </select>
+                            </div>
+                             <div>
+                                <label for="defectNotes" class="block text-sm font-medium brown-text">Notes</label>
+                                <textarea id="defectNotes" name="defectNotes" rows="2" class="mt-1 block w-full rounded-lg input-style" placeholder="e.g., Stain on fabric, bad stitch..."></textarea>
+                            </div>
+                            <button type="submit" class="w-full !mt-6 bg-red-500 text-white py-2 rounded-lg font-semibold hover:bg-red-600 transition">Log Defect</button>
+                        </form>
+                    </div>
+                    <div class="cute-card bg-red-50 p-6 rounded-xl shadow-lg border-red-300">
+                        <h2 class="text-2xl font-bold text-red-700 card-header">Defective Items Log</h2>
+                        <div class="overflow-auto max-h-96">
+                            <table class="w-full">
+                                <thead class="brown-text">
+                                    <tr>
+                                        <th class="p-2 text-left">Item</th>
+                                        <th class="p-2 text-center">Qty</th>
+                                        <th class="p-2 text-left">Status</th>
+                                        <th class="p-2 text-center">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="defects-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Expenses Tab -->
+            <div id="tab-content-expenses" class="tab-content">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="cute-card bg-white p-6 rounded-xl shadow-lg border-pink-accent">
+                        <h2 class="text-2xl font-bold pink-text card-header">💸 Log an Expense</h2>
+                        <form id="expense-form" class="space-y-4">
+                            <input type="date" id="expenseDate" name="expenseDate" required class="w-full input-style">
+                             <select id="expenseCategory" name="expenseCategory" required class="w-full input-style">
+                                <option value="">-- Select Category --</option>
+                                <option value="Raw Materials">Raw Materials</option>
+                                <option value="Packaging">Packaging</option>
+                                <option value="Utilities">Utilities</option>
+                                <option value="Marketing">Marketing</option>
+                                <option value="Other">Other</option>
+                            </select>
+                            <input type="text" id="expenseDesc" name="expenseDesc" required placeholder="Expense description" class="w-full input-style">
+                            <input type="number" id="expenseAmount" name="expenseAmount" min="0.01" step="0.01" required placeholder="Amount" class="w-full input-style">
+                            <button type="submit" class="w-full btn-primary py-2 rounded-lg font-semibold">Log Expense</button>
+                        </form>
+                    </div>
+                    <div class="cute-card bg-light-yellow p-6 rounded-xl shadow-lg border-yellow-primary">
+                         <div class="flex justify-between items-center mb-4">
+                            <h2 class="text-2xl font-bold yellow-text card-header flex-grow">Recent Expenses</h2>
+                            <button id="export-expenses-btn" class="btn-secondary py-1 px-3 text-sm flex-shrink-0 ml-4">Export CSV</button>
+                        </div>
+                        <div class="overflow-auto max-h-96">
+                            <table class="w-full">
+                                <thead class="brown-text"><tr><th class="p-2 text-left">Date</th><th class="p-2 text-left">Category</th><th class="p-2 text-left">Description</th><th class="p-2 text-right">Amount</th><th class="p-2 text-center">Action</th></tr></thead>
+                                <tbody id="expenses-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Analytics Tab -->
+            <div id="tab-content-analytics" class="tab-content">
+                <div class="space-y-6">
+                    <div class="cute-card bg-white/80 p-6 rounded-xl shadow-lg border-pink-accent">
+                        <div class="flex flex-wrap justify-center items-center gap-4 mb-4">
+                            <label for="analytics-start-date" class="brown-text font-semibold">From:</label>
+                            <input type="date" id="analytics-start-date" class="input-style !p-2 !text-sm">
+                            <label for="analytics-end-date" class="brown-text font-semibold">To:</label>
+                            <input type="date" id="analytics-end-date" class="input-style !p-2 !text-sm">
+                            <button id="analytics-filter-btn" class="btn-primary py-2 px-4">Filter</button>
+                        </div>
+                        <div class="relative h-80"><canvas id="salesChart"></canvas></div>
+                    </div>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="cute-card bg-light-yellow p-6 rounded-xl shadow-lg border-pink-accent">
+                            <h2 class="text-3xl font-bold pink-text card-header flex items-center"><span class="text-2xl mr-2">⭐</span> Profit Dashboard</h2>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                                <div class="bg-white p-4 rounded-lg shadow-sm">
+                                    <p class="text-sm brown-text">Total Revenue</p><p id="total-revenue" class="text-2xl font-bold text-green-600">P0.00</p>
+                                </div>
+                                <div class="bg-white p-4 rounded-lg shadow-sm">
+                                    <p class="text-sm brown-text">Total Material Cost</p><p id="total-cogs" class="text-2xl font-bold text-red-600">P0.00</p>
+                                </div>
+                                <div class="bg-white p-4 rounded-lg shadow-sm col-span-2">
+                                    <p class="text-sm brown-text">Total Other Expenses</p><p id="total-expenses" class="text-2xl font-bold text-red-600">P0.00</p>
+                                </div>
+                            </div>
+                            <div class="yellow-primary p-5 rounded-lg shadow-inner text-center mb-6">
+                                <p class="text-xl font-semibold brown-text">NET PROFIT</p>
+                                <p id="net-profit" class="text-4xl font-extrabold pink-text">P0.00</p>
+                            </div>
+                            <h3 class="text-xl font-bold brown-text">Owner Share Breakdown</h3>
+                            <form id="analytics-shares-form">
+                                <div id="owner-shares" class="bg-white mt-3 p-4 rounded-lg shadow-sm border border-yellow-200 space-y-2">
+                                    <!-- JS-generated content -->
+                                </div>
+                                <p id="analytics-shares-status" class="text-center text-sm font-medium mt-2"></p>
+                                <button type="submit" class="w-full btn-secondary py-2 rounded-lg font-semibold mt-2">Save Share Changes</button>
+                            </form>
+                        </div>
+                        <div class="cute-card bg-white/80 p-6 rounded-xl shadow-lg border-yellow-primary">
+                             <h2 class="text-2xl font-bold yellow-text card-header flex items-center"><span class="text-2xl mr-2">💸</span> Expense Breakdown</h2>
+                             <div class="relative h-96"><canvas id="expenseChart"></canvas></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+             <!-- Suppliers Tab -->
+            <div id="tab-content-suppliers" class="tab-content">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="cute-card bg-white p-6 rounded-xl shadow-lg border-pink-accent">
+                        <h2 class="text-2xl font-bold pink-text card-header">📞 Add a Supplier</h2>
+                        <form id="supplier-form" class="space-y-4">
+                            <input type="text" id="supplierName" required placeholder="Supplier Name" class="w-full input-style">
+                            <input type="text" id="supplierMaterial" required placeholder="Material they supply (e.g., Fabric)" class="w-full input-style">
+                            <input type="text" id="supplierContact" required placeholder="Contact Info (Phone/Email)" class="w-full input-style">
+                            <button type="submit" class="w-full btn-primary py-2 rounded-lg font-semibold">Save Supplier</button>
+                        </form>
+                    </div>
+                    <div class="cute-card bg-light-yellow p-6 rounded-xl shadow-lg border-yellow-primary">
+                        <h2 class="text-2xl font-bold yellow-text card-header">Supplier List</h2>
+                        <div id="suppliers-list" class="space-y-3 overflow-auto max-h-96"></div>
+                    </div>
+                </div>
+            </div>
+
+             <!-- Costing Tab -->
+            <div id="tab-content-costing" class="tab-content">
+                 <div class="max-w-xl mx-auto">
+                    <div class="cute-card bg-white p-6 rounded-xl shadow-lg border-yellow-primary">
+                        <h2 class="text-2xl font-bold yellow-text card-header flex items-center"><span class="text-2xl mr-2">⚙️</span> Cost Settings</h2>
+                        <form id="costing-form" class="space-y-4">
+                            <div>
+                                <label for="costSellingPrice" class="block text-sm font-medium brown-text">Product Selling Price (per unit)</label>
+                                <input type="number" id="costSellingPrice" min="0" step="0.01" required class="mt-1 block w-full rounded-lg input-style">
+                            </div>
+                             <div>
+                                <label for="costMaterialCost" class="block text-sm font-medium brown-text">Material Cost (COGS per unit)</label>
+                                <input type="number" id="costMaterialCost" min="0" step="0.01" required class="mt-1 block w-full rounded-lg input-style">
+                            </div>
+                            <div class="pt-2 border-t border-yellow-primary/30">
+                                <p class="text-sm font-bold brown-text mb-1">Labor Rates</p>
+                                <label for="costTailorRate" class="block text-sm font-medium brown-text">Tailor Rate (per cover sewn)</label>
+                                <input type="number" id="costTailorRate" min="0" step="0.01" required class="mt-1 block w-full rounded-lg input-style">
+                                <label for="costCutter1Rate" class="block text-sm font-medium brown-text mt-3">Cutter 1 Rate (per cover cut)</label>
+                                <input type="number" id="costCutter1Rate" min="0" step="0.01" required class="mt-1 block w-full rounded-lg input-style">
+                                <label for="costCutter2Rate" class="block text-sm font-medium brown-text mt-3">Cutter 2 Rate (per foam cut)</label>
+                                <input type="number" id="costCutter2Rate" min="0" step="0.01" required class="mt-1 block w-full rounded-lg input-style">
+                            </div>
+                            <div class="pt-2 border-t border-yellow-primary/30">
+                                <p class="text-sm font-bold brown-text mb-1">Owner Share Settings</p>
+                                <div id="owner-shares-settings" class="space-y-2">
+                                    <!-- Owner fields will be generated by JS -->
+                                </div>
+                            </div>
+                            <p id="costing-status-message" class="text-sm font-medium pt-2"></p>
+                            <button type="submit" class="w-full btn-secondary py-3 rounded-lg font-semibold text-lg shadow-md">Save Settings</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+</body>
+</html>
+
